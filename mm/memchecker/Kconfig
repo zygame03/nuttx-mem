@@ -1,0 +1,21 @@
+config MM_MEMCHECKER
+	bool "Memory Checker"
+	default n
+	---help---
+		Memory Checker is a tool for detecting memory bugs in NuttX.
+		After turn on this option, Please add -DCONFIG_MEMCHECK to
+		Kconfig and rebuild NuttX.
+
+config MM_MEMCHECKER_PAGE_SIZE
+	int "Page Size"
+	default 4096
+	depends on MM_MEMCHECKER
+	---help---
+		Page size of memory to be checked.
+
+config MM_MEMCHECKER_PAGE_NUM
+	int "Page Number"
+	default 4
+	depends on MM_MEMCHECKER
+	---help---
+		Number of pages to be checked.

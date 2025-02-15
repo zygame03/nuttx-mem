@@ -41,6 +41,10 @@
  * Pre-processor Definitions
  ****************************************************************************/
 
+#ifdef CONFIG_MM_MEMCHECKER
+#  undef free
+#endif
+
 #if CONFIG_MM_BACKTRACE >= 0
 #  define MEMPOOL_REALBLOCKSIZE(pool) (ALIGN_UP((pool)->blocksize + \
                                        sizeof(struct mempool_backtrace_s), \

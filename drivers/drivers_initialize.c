@@ -55,6 +55,7 @@
 #include <nuttx/vhost/vhost.h>
 #include <nuttx/virtio/virtio.h>
 #include <nuttx/drivers/optee.h>
+#include <nuttx/mm/memchecker.h>
 
 /****************************************************************************
  * Pre-processor Definitions
@@ -286,6 +287,10 @@ void drivers_initialize(void)
 
 #ifdef CONFIG_THERMAL
   thermal_init();
+#endif
+
+#ifdef CONFIG_MM_MEMCHECKER
+  memchecker_init();
 #endif
 
   drivers_trace_end();
