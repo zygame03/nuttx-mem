@@ -34,14 +34,13 @@ enum memchecker_state
 };
 
 enum memchecker_error_type
-  {
-    MEMCHECKER_ERROR_OUT_OF_MEMORY,
-    MEMCHECKER_ERROR_DOUBLE_FREE,
-    MEMCHECKER_ERROR_USE_AFTER_FREE,
-    MEMCHECKER_ERROR_INVALID_FREE,
-  };
+{
+  MEMCHECKER_ERROR_OUT_OF_MEMORY,
+  MEMCHECKER_ERROR_DOUBLE_FREE,
+  MEMCHECKER_ERROR_USE_AFTER_FREE,
+  MEMCHECKER_ERROR_INVALID_FREE,
+};
 
-struct memchecker_header
 
 struct memchecker_metadata
 {

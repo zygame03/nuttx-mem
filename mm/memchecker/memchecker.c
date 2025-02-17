@@ -128,12 +128,12 @@ void *memchecker_malloc(const char *file, int line, size_t size)
   if(!addr)
     {
       syslog(LOG_ERR, "Alloc failed");
-      return;
+      return NULL;
     }
   
   metadata->addr = addr + sizeof(metadata) + MEMCHECKER_CANARY;
   for_each_canary(metadata, set_canary_byte);
-  return addr;
+  return (void *)addr;
 }
 
 void memchecker_free(const char *file, int line,const void *addr)
