@@ -31,26 +31,29 @@ enum memchecker_state
 {
     MEMCHECKER_ALLOCATED,
     MEMCHECKER_FREED,
+    MEMCHECKER_ERROR,
 };
 
 enum memchecker_error_type
 {
-  MEMCHECKER_ERROR_OUT_OF_MEMORY,
-  MEMCHECKER_ERROR_DOUBLE_FREE,
-  MEMCHECKER_ERROR_USE_AFTER_FREE,
-  MEMCHECKER_ERROR_INVALID_FREE,
+  ERROR_OUT_OF_MEMORY,
+  ERROR_DOUBLE_FREE,
+  ERROR_USE_AFTER_FREE,
+  ERROR_INVALID_FREE,
 };
 
 
 struct memchecker_metadata
 {
 	struct list_node node;
-	
-	enum memchecker_state state;
-    
+
   size_t size;
   
   unsigned long addr;
+	
+	enum memchecker_state state;
+	
+	enum memchecker_error_type error_type;
 };
 
 void memchecker_init(void);

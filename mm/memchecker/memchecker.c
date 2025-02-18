@@ -22,6 +22,8 @@ static struct list_node metadata_list;
 
 static struct list_node metadata_freelist;
 
+static struct list_node metadata_errorlist;
+
 /****************************************************************************
  * Private Functions
  ****************************************************************************/
@@ -32,6 +34,7 @@ static struct memchecker_metadata *addr_to_metadata(unsigned long addr)
   list_for_every_entry(&metadata_list, metadata,
                        struct memchecker_metadata, node)
     {
+      // printf("addr: %p\n", metadata);
       if (metadata->addr == addr)
         {
           return metadata;
@@ -55,17 +58,18 @@ static bool check_canary_byte(uint8_t *addr)
 	return false;
 }
 
-static void for_each_canary(const struct memchecker_metadata *metadata, 
+static void for_each_canary(struct memchecker_metadata *metadata, 
                             bool (*fn)(uint8_t *))
 {
 	unsigned long addr;
-	enum memchecker_error_type error_type;
 	
 	for (addr = metadata->addr - MEMCHECKER_CANARY;
 	     addr < metadata->addr; addr++)
 	  {
 		  if (!fn((uint8_t *)addr))
 		    {
+		      metadata->state = MEMCHECKER_ERROR;
+		      metadata->error_type = ERROR_OUT_OF_MEMORY;
 		    	break;
        	}
 	  }
@@ -77,6 +81,8 @@ static void for_each_canary(const struct memchecker_metadata *metadata,
 	      {
 	        if (!fn((uint8_t *)addr))
 	          {
+	            metadata->state = MEMCHECKER_ERROR;
+	            metadata->error_type = ERROR_USE_AFTER_FREE;
 			        break;
 		        }
       	}
@@ -87,6 +93,8 @@ static void for_each_canary(const struct memchecker_metadata *metadata,
 	  {
 	    if (!fn((uint8_t *)addr))
 	      {
+	        metadata->state = MEMCHECKER_ERROR;
+	        metadata->error_type = ERROR_OUT_OF_MEMORY;
 			    break;
 		    }
   	}
@@ -123,8 +131,10 @@ void *memchecker_malloc(const char *file, int line, size_t size)
   metadata->state = MEMCHECKER_ALLOCATED;
   metadata->size = size;
   
-  unsigned long addr = (unsigned long)malloc(sizeof(struct memchecker_metadata)
-                        + size + 2 * sizeof(MEMCHECKER_CANARY));
+  unsigned long addr = 
+    (unsigned long)malloc(sizeof(struct memchecker_metadata)
+    + size + 2 * sizeof(MEMCHECKER_CANARY));
+    
   if(!addr)
     {
       syslog(LOG_ERR, "Alloc failed");
@@ -133,22 +143,45 @@ void *memchecker_malloc(const char *file, int line, size_t size)
   
   metadata->addr = addr + sizeof(metadata) + MEMCHECKER_CANARY;
   for_each_canary(metadata, set_canary_byte);
-  return (void *)addr;
+  
+  syslog(LOG_INFO, "Alloc succeed: %p", metadata->addr);
+  return (void *)metadata->addr;
 }
 
-void memchecker_free(const char *file, int line,const void *addr)
+void memchecker_free(const char *file, int line, const void *addr)
 {
   struct memchecker_metadata *metadata = 
     addr_to_metadata((unsigned long)addr);
   
+  // printf("addr: %p\n", metadata);
+  
+  /* Double free */
+  if(metadata->state == MEMCHECKER_FREED)
+    {
+      metadata->state = MEMCHECKER_ERROR;
+      metadata->error_type = ERROR_DOUBLE_FREE;
+    }
+  
   for_each_canary(metadata, check_canary_byte);  
   
-  metadata->state = MEMCHECKER_FREED;
-  
-  for_each_canary(metadata, set_canary_byte);
-  
-  list_add_tail(&metadata_freelist, &metadata->node);
- 
+  if(metadata->state == MEMCHECKER_ALLOCATED)
+    {
+      metadata->state = MEMCHECKER_FREED;
+      for_each_canary(metadata, set_canary_byte);                      
+      list_add_tail(&metadata_freelist, &metadata->node);
+    }
+    
+  if(metadata->state == MEMCHECKER_ERROR)
+    {
+      switch(metadata->error_type)
+        {
+          case ERROR_OUT_OF_MEMORY: syslog(LOG_ERR, "Error : OOM"); break;
+          case ERROR_USE_AFTER_FREE: syslog(LOG_ERR, "Error : UAF"); break;
+          case ERROR_DOUBLE_FREE: syslog(LOG_ERR, "Error : DF"); break;
+        } 
+      list_add_tail(&metadata_errorlist, &metadata->node);
+    }
+    
   /* Set timer */    
 }
 
@@ -157,5 +190,6 @@ void memchecker_init(void)
   /* Metadata list initialize */
   list_initialize(&metadata_list);
   list_initialize(&metadata_freelist);
+  list_initialize(&metadata_errorlist);
 }
 
