@@ -29,16 +29,16 @@ void memchecker_free(const char *file, int line, FAR const void *ptr);
 
 enum memchecker_state
 {
-    MEMCHECKER_ALLOCATED,
-    MEMCHECKER_FREED,
-    MEMCHECKER_ERROR,
+  MEMCHECKER_ALLOCATED,
+  MEMCHECKER_FREED,
+  MEMCHECKER_ERROR,
 };
 
 enum memchecker_error_type
 {
-  ERROR_OUT_OF_MEMORY,
-  ERROR_DOUBLE_FREE,
+  ERROR_OUT_OF_BOUDNDS,
   ERROR_USE_AFTER_FREE,
+  ERROR_DOUBLE_FREE,
   ERROR_INVALID_FREE,
 };
 
@@ -56,7 +56,10 @@ struct memchecker_metadata
 	enum memchecker_error_type error_type;
 };
 
+void print_metadata_info(void);
+
 void memchecker_init(void);
+
 
 #endif /* __INCLUDE_NUTTX_MM_MEMCHECKER_H */
 
