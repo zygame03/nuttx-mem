@@ -6,14 +6,22 @@ config MM_MEMCHECKER
 		After turn on this option, Please add -DCONFIG_MEMCHECK to
 		Kconfig and rebuild NuttX.
 
-config MM_MEMCHECKER_PAGE_SIZE
-	int "Page Size"
-	default 4096
+config MM_MEMCHECKER_DATA_SIZE
+	int "Data Size"
+	default 64
 	depends on MM_MEMCHECKER
 	---help---
-		Page size of memory to be checked.
+		Data size of memory to be checked.
 
-config MM_MEMCHECKER_PAGE_NUM
+config MM_MEMCHECKER_BOUND_SIZE
+	int "Bound Size"
+	default 32
+	depends on MM_MEMCHECKER
+	---help---
+		Bound size of memory to be checked.
+		Usually, it should be set to half of the page size.
+
+config MM_MEMCHECKER_PAGE_NUMBER
 	int "Page Number"
 	default 4
 	depends on MM_MEMCHECKER

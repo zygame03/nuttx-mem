@@ -22,13 +22,14 @@ void memchecker_free(const char *file, int line, FAR const void *ptr);
 
 #define MEMCHECKER_STACK_DEPTH 32
 
-#define MEMCHECKER_CANARY 4
+#define MAX_TASKS 16
 
 #define BYTECHECKER_CANARY_PATTERN(addr) \
   ((uint8_t)0xa3 ^ (uint8_t)((unsigned long)(addr) & 0x7))
 
 enum memchecker_state
 {
+  MEMCHECKER_UNUSED,
   MEMCHECKER_ALLOCATED,
   MEMCHECKER_FREED,
   MEMCHECKER_ERROR,
@@ -40,20 +41,33 @@ enum memchecker_error_type
   ERROR_USE_AFTER_FREE,
   ERROR_DOUBLE_FREE,
   ERROR_INVALID_FREE,
+  ERROR_MEMORY_LEAK,
+  ERROR_NONE,
 };
-
 
 struct memchecker_metadata
 {
-	struct list_node node;
+  struct list_node node;
 
-  size_t size;
-  
   unsigned long addr;
-	
-	enum memchecker_state state;
+
+  enum memchecker_state state;
 	
 	enum memchecker_error_type error_type;
+
+  size_t size;
+
+  uint64_t ts;
+
+  pid_t pid;
+
+  char file[32];
+
+  int line;
+	
+  int stack_depth;
+
+  unsigned long stack[MEMCHECKER_STACK_DEPTH];
 };
 
 void print_metadata_info(void);
