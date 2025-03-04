@@ -1,6 +1,16 @@
 ifeq ($(CONFIG_MM_MEMCHECKER),y)
-  CSRCS += memchecker.c
+  CSRCS += memchecker.c 
+  CSRCS += leakdetector.c
   CFLAGS += -include $(TOPDIR)/include/nuttx/mm/memchecker.h
+  CFLAGS += -include $(TOPDIR)/include/nuttx/mm/leakdetector.h
+endif
+
+ifeq ($(CONFIG_DEBUG_NO_INLINE),y)
+CFLAGS += -fno-inline
+endif
+
+ifeq ($(CONFIG_DEBUG_FRAME_POINTER),y)
+CFLAGS += -fno-omit-frame-pointer 
 endif
 
 DEPPATH += --dep-path memchecker
