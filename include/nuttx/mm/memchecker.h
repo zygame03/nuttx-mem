@@ -52,8 +52,8 @@ struct memchecker_metadata
   unsigned long addr;
 
   enum memchecker_state state;
-	
-	enum memchecker_error_type error_type;
+
+  enum memchecker_error_type error_type;
 
   size_t size;
 
@@ -64,7 +64,7 @@ struct memchecker_metadata
   char file[32];
 
   int line;
-	
+
   int stack_depth;
 
   unsigned long stack[MEMCHECKER_STACK_DEPTH];
@@ -74,6 +74,4 @@ void print_metadata_info(void);
 
 void memchecker_init(void);
 
-
 #endif /* __INCLUDE_NUTTX_MM_MEMCHECKER_H */
-

@@ -6,6 +6,8 @@
 #include <nuttx/signal.h>
 #include <sched.h>
 #include <nuttx/mm/memchecker.h>
+#include <nuttx/mm/mmdebug.h>
+
 #include <syslog.h>
 #include <execinfo.h>
 #include <nuttx/allsyms.h>
@@ -37,7 +39,7 @@
  * Private Types
  ****************************************************************************/
 
-static struct memchecker_metadata metadata_list[MEMCHECKER_PAGE_NUMBER];
+struct memchecker_metadata metadata_list[MEMCHECKER_PAGE_NUMBER];
 
 static struct list_node free_list;
 
@@ -245,6 +247,7 @@ static void for_each_canary(struct memchecker_metadata *metadata,
 
 static void *memchecker_guarded_alloc(const char *file, int line, size_t size)
 {
+
   struct memchecker_metadata *metadata = NULL;
 
   if (!list_is_empty(&free_list))
@@ -272,6 +275,11 @@ static void *memchecker_guarded_alloc(const char *file, int line, size_t size)
   // backtrace((void **)metadata->stack, MEMCHECKER_STACK_DEPTH);
 
   // syslog(LOG_INFO, "Alloc succeed: %p", metadata->addr);
+
+  if (add_metadata_to_task_mem_stats(metadata))
+  {
+    syslog(LOG_INFO, "adding metadata failed...\n");
+  }
   return (void *)metadata->addr;
 }
 
@@ -379,11 +387,19 @@ void print_metadata_info()
   printf("================list===============\n");
 }
 
+/**
+ * 初始化任务头节点
+ */
+extern struct list_node task_mem_status_list;
+
 void memchecker_init(void)
 {
   /* Metadata list initialize */
+  list_initialize(&task_mem_status_list);
   list_initialize(&free_list);
   list_initialize(&error_list);
-
   memchecker_init_pool();
+  /**  此处可以加上条件编译  用于判断是否启动内存泄漏检查 **/
+
+  init_leak_detection();
 }
