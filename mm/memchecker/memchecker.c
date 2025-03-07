@@ -11,6 +11,9 @@
 #include <nuttx/allsyms.h>
 #include <nuttx/symtab.h>
 #include <nuttx/arch.h>
+#include <sys/time.h>
+#include <time.h>
+#include "hook.h"
 
 /****************************************************************************
  * Pre-processor Definitions
@@ -37,13 +40,23 @@
  * Private Types
  ****************************************************************************/
 
+/* Memory checker metadata list*/
+
 static struct memchecker_metadata metadata_list[MEMCHECKER_PAGE_NUMBER];
+
+/* can malloc metadata list */
 
 static struct list_node free_list;
 
+/* error metadata list */
+
 static struct list_node error_list;
 
+/* the ptr to the memory pool */
+
 static char *memchecker_pool;
+
+/* error type to string*/
 
 static const char *error_msg[] = {"Out of bounds",
                                   "Use after free",
@@ -51,11 +64,11 @@ static const char *error_msg[] = {"Out of bounds",
                                   "Invalid free",
                                   "Memory leak"};
 
-static struct work_s g_memcheck_work;  
+// static struct work_s g_memcheck_work;  
 
-static int process_list[MAX_TASKS];
+// static int process_list[MAX_TASKS];
 
-static void error_report(struct memchecker_metadata *metadata);
+static void memchecker_report(struct memchecker_metadata *metadata);
 
 static bool set_canary_byte(uint8_t *addr);
 
@@ -64,29 +77,29 @@ static bool check_canary_byte(uint8_t *addr);
 static void for_each_canary(struct memchecker_metadata *metadata, 
                             bool (*fn)(uint8_t *));
 
+void print_metadata(struct memchecker_metadata *metadata);
+
+time_t get_timestamp(void);
+
 /****************************************************************************
  * Private Functions
  ****************************************************************************/
 
-// static const char *find_symbol(uintptr_t addr) 
-// {
-//   for (int i = 0; g_nallsyms != NULL; i++) 
-//     {
-//       if (addr >= (uintptr_t)g_allsyms[i].sym_value &&
-//           addr < (uintptr_t)g_allsyms[i + 1].sym_value) 
-//         {
-//           return g_allsyms[i].sym_name;
-//         }
-//     }
-//   return NULL;
-// }
-
-static void error_report(struct memchecker_metadata *metadata)
+static void memchecker_report(struct memchecker_metadata *metadata)
 {
   int pid = getpid();
   struct tcb_s *task = nxsched_get_tcb(pid);
-  syslog(LOG_ERR, "=================================================");
+
+  syslog(LOG_ERR, "======================================================");
   syslog(LOG_ERR, "BUG: MEMCHCHECKER: %s", error_msg[metadata->error_type]);
+
+  syslog(LOG_ERR, "Address: %p - %p", 
+    (void *)metadata->addr - MEMCHECKER_BOUND_SIZE, 
+    (void *)metadata->addr + metadata->size + MEMCHECKER_BOUND_SIZE);
+  //system
+  syslog(LOG_ERR, "CPU: 0, PID: %d, Taskname: %s", pid, task->name);
+
+  print_metadata(metadata);
   syslog(LOG_ERR, "Backtrace:");
 
   struct symtab_s *symbol;
@@ -94,10 +107,10 @@ static void error_report(struct memchecker_metadata *metadata)
 
   for(int i = 0; i < metadata->stack_depth; i++)
   {
-    symbol = allsyms_findbyvalue((void *)metadata->stack[i], &size);
+    symbol = (struct symtab_s *)allsyms_findbyvalue((void *)metadata->stack[i], &size);
     if (symbol != NULL)
       {
-        syslog(LOG_ERR, "[%d] %p: %16s", i, 
+        syslog(LOG_ERR, "[%2d] [%p] %-16s", i, 
               (void *)metadata->stack[i], symbol->sym_name);
       }
     else
@@ -107,18 +120,12 @@ static void error_report(struct memchecker_metadata *metadata)
     // sleep(1);
   }
 
-  syslog(LOG_ERR, "memchecker: Range: %p - %p", 
-         (void *)metadata->addr - MEMCHECKER_BOUND_SIZE, 
-         (void *)metadata->addr + metadata->size + MEMCHECKER_BOUND_SIZE);
-  syslog(LOG_ERR, "            Size: %d", (int)metadata->size);
-  //system
-  syslog(LOG_ERR, "CPU: 0, PID: %d, Taskname: %s", pid, task->name);
-
+  
 #ifdef CONFIG_VERSION_STRING
   syslog(LOG_ERR, "NuttX Version: %s", CONFIG_VERSION_STRING);
 #endif
 
-  syslog(LOG_ERR, "=================================================");
+  syslog(LOG_ERR, "======================================================");
 }
 
 static bool is_memchecker_addr(unsigned long addr)
@@ -131,20 +138,7 @@ static bool is_memchecker_addr(unsigned long addr)
   return false;
 }
 
-static struct memchecker_metadata *addr_to_metadata(unsigned long addr)
-{
-
-  if(!is_memchecker_addr(addr))
-    {
-      return NULL;
-    }
-  struct memchecker_metadata *metadata;
-  int index = (addr - (unsigned long)memchecker_pool) / MEMCHECKER_PAGE_SIZE;
-  metadata = &metadata_list[index];
-  return metadata;
-}
-
-static void memchecker_alloc_pool()
+static void memchecker_alloc_pool(void)
 {
   memchecker_pool = (char *)malloc(MEMCHECKER_POOL_SIZE);
   if(!memchecker_pool)
@@ -155,14 +149,14 @@ static void memchecker_alloc_pool()
   memset(memchecker_pool, 0, MEMCHECKER_POOL_SIZE);
 }
 
-static void memchecker_init_pool()
+static void memchecker_init_pool(void)
 {
   memchecker_alloc_pool();
   if(!memchecker_pool)
     {
       return;
     }
-  syslog(LOG_INFO, "Memchecker pool init succeed, addr: %p", memchecker_pool);
+  
   for(int i = 0; i < MEMCHECKER_PAGE_NUMBER; i++)
     {
       struct memchecker_metadata *metadata = &metadata_list[i];
@@ -170,7 +164,6 @@ static void memchecker_init_pool()
       list_add_tail(&free_list, &metadata->node);
       metadata->addr = (unsigned long)memchecker_pool + 
         i * MEMCHECKER_PAGE_SIZE + MEMCHECKER_BOUND_SIZE;
-      syslog(LOG_INFO,"addr: %p\n", (void *)metadata->addr);
       metadata->size = 0;
      
       metadata->state = MEMCHECKER_UNUSED;
@@ -209,7 +202,7 @@ static void for_each_canary(struct memchecker_metadata *metadata,
 		    {
 		      metadata->state = MEMCHECKER_ERROR;
 		      metadata->error_type = ERROR_OUT_OF_BOUDNDS;
-          error_report(metadata);
+          memchecker_report(metadata);
 		    	break;
        	}
 	  }
@@ -223,7 +216,7 @@ static void for_each_canary(struct memchecker_metadata *metadata,
 	          {
 	            metadata->state = MEMCHECKER_ERROR;
 	            metadata->error_type = ERROR_USE_AFTER_FREE;
-              error_report(metadata);
+              memchecker_report(metadata);
 			        break;
 		        }
       	}
@@ -237,7 +230,7 @@ static void for_each_canary(struct memchecker_metadata *metadata,
 	      {
 	        metadata->state = MEMCHECKER_ERROR;
 	        metadata->error_type = ERROR_OUT_OF_BOUDNDS;
-          error_report(metadata);
+          memchecker_report(metadata);
 			    break;
 		    }
   	}
@@ -252,7 +245,7 @@ static void *memchecker_guarded_alloc(const char *file, int line, size_t size)
       metadata = list_entry(free_list.next, struct memchecker_metadata, node);
       list_delete_init(&metadata->node);
     }
-  
+    
   if(!metadata)
     {
       return malloc(size);
@@ -265,13 +258,11 @@ static void *memchecker_guarded_alloc(const char *file, int line, size_t size)
   metadata->pid = getpid();
   strcpy(metadata->file, file);
   metadata->line = line;
-  metadata->ts = clock();
+  metadata->ts = get_timestamp();
   metadata->stack_depth = 
-    up_backtrace(nxsched_get_tcb(metadata->pid), metadata->stack, 32, 0);
+  up_backtrace(nxsched_get_tcb(metadata->pid), 
+               (void **)metadata->stack, 32, 0);
 
-    // backtrace((void **)metadata->stack, MEMCHECKER_STACK_DEPTH);
-
-  // syslog(LOG_INFO, "Alloc succeed: %p", metadata->addr);
   return (void *)metadata->addr;
 }
 
@@ -334,7 +325,7 @@ void memchecker_free(const char *file, int line, const void *addr)
   
   if(!metadata)
     {
-      free(addr);
+      free((void *)addr);
       return;
     }
   
@@ -354,29 +345,50 @@ void memchecker_free(const char *file, int line, const void *addr)
       for_each_canary(metadata, check_canary_byte);
       metadata->state = MEMCHECKER_ERROR;
       metadata->error_type = ERROR_DOUBLE_FREE;
-      error_report(metadata);
+      memchecker_report(metadata);
       return;
     }
   /* Set timer */    
 }
 
-void print_metadata_info()
+struct memchecker_metadata *index_to_metadata(int index)
 {
-  printf("================list===============\n");
-  for(int i = 0; i < MEMCHECKER_PAGE_NUMBER; i++)
+  return &metadata_list[index];
+}
+
+struct memchecker_metadata *addr_to_metadata(unsigned long addr)
+{
+  if(!is_memchecker_addr(addr))
     {
-      struct memchecker_metadata *metadata = &metadata_list[i];
-      printf("metadata_%d\n", i);
-      printf("size: %d, addr: %p\n", 
-        (void *)metadata->size, (void *)metadata->addr);
-      printf("state: %d", metadata->state);
-      if(metadata->state == MEMCHECKER_ERROR)
-        {
-          printf(", error: %d", metadata->error_type);
-        }
-      printf("\n");
-    }   
-  printf("================list===============\n");
+      return NULL;
+    }
+
+  int index = (addr - (unsigned long)memchecker_pool) / MEMCHECKER_PAGE_SIZE;
+  return index_to_metadata(index);
+}
+
+time_t get_timestamp(void)
+{
+  struct timespec ts;
+  uint32_t us;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  us = ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
+  return us;
+}
+
+void format_timestamp(time_t timestamp) {
+  struct tm *timeinfo;
+  char buffer[80];
+
+  timeinfo = localtime(&timestamp);
+
+  strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", timeinfo);
+  syslog(LOG_INFO, "%s", buffer);
+}
+
+void print_metadata(struct memchecker_metadata *metadata)
+{
+  format_timestamp(metadata->ts);
 }
 
 void memchecker_init(void)

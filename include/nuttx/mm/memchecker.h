@@ -18,7 +18,7 @@ void memchecker_free(const char *file, int line, FAR const void *ptr);
 #define malloc(size) memchecker_malloc(__FILE__, __LINE__, size)
 #define free(ptr) memchecker_free(__FILE__, __LINE__, ptr)
 
-#endif
+#endif /* __ASSEMBLY__ */
 
 #define MEMCHECKER_STACK_DEPTH 32
 
@@ -57,7 +57,7 @@ struct memchecker_metadata
 
   size_t size;
 
-  uint64_t ts;
+  time_t ts;
 
   pid_t pid;
 
@@ -70,10 +70,11 @@ struct memchecker_metadata
   unsigned long stack[MEMCHECKER_STACK_DEPTH];
 };
 
-void print_metadata_info(void);
-
 void memchecker_init(void);
 
+struct memchecker_metadata *index_to_metadata(int index);
+
+struct memchecker_metadata *addr_to_metadata(unsigned long addr);
 
 #endif /* __INCLUDE_NUTTX_MM_MEMCHECKER_H */
 
