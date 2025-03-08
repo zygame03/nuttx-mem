@@ -32,4 +32,12 @@ extern const char *COLOR_TABLE[];
  * @brief 将 UNIX 时间戳转换为格式化的日期时间字符串 (UTC)
  ****************************************************************************/
 int timestamp_to_utc_str(uint64_t timestamp, char *buffer, size_t buf_size);
+
+/****************************************************************************
+ * @brief  对应秒级时间戳，此时对精度的要求并不算高
+ *  choice 目前支持两种选择
+ *    choice == 0 ===>UTC时间
+ *    choice == 1 ===>localtime
+ ****************************************************************************/
+int format_timestamp(time_t timestamp, char *buffer, int choice);
 #endif

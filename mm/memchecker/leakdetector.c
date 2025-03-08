@@ -11,6 +11,14 @@
 #include <nuttx/mutex.h>
 
 /****************************************************************************
+ * 用于调试输出
+ ****************************************************************************/
+#define LOG_FMT "%-16s: %-30u\n"
+#define LOG_STR_FMT "%-16s: %-30s\n"
+#define LOG_SIZE_FMT "%-16s: %-30lu\n"
+#define SEPARATOR "========================================"
+
+/****************************************************************************
  *  此处取消钩子函数, 为避免嵌套造成问题，此文件中的内存申请操作不计入统计
  ****************************************************************************/
 #undef malloc
@@ -31,7 +39,25 @@ struct list_node task_mem_status_list;
 volatile spinlock_t tms_list_lock;
 
 /****************************************************************************
- *  check_memory_leak(); 暂时放一放  xxxxx
+ *  check_memory_leak();
+ *  通过权值算法加权判断,权重如下
+ *  存活时间权重（W1）
+ *  未释放块的平均存活时间：avg_age = Σ(current_time - alloc_ts)/unreleased_count
+ *  权重公式：W1 = log2(avg_age / 基准时间) （基准时间建议取10秒）
+ *
+ *  内存失衡权重（W2）
+ *  申请/释放比例：alloc_free_ratio = (total_alloc - total_free) / (total_alloc + 1)
+ *  权重公式：W2 = 1 / (1 + exp(-5*(alloc_free_ratio-0.3))) （Sigmoid强化突变）
+ *
+ *  内存增长斜率（W3）
+ *  单位时间内存增长：mem_growth = (current_mem - prev_mem) / 检测间隔
+ *  权重公式：W3 = tanh(mem_growth / 内存警戒线)
+ *
+ *  调用栈聚集度（W4）
+ *  统计相同调用栈模式的未释放块占比
+ *  权重公式：W4 = 最大重复调用栈比例 * 2
+ *
+ *  leak_score = 0.4*W1 + 0.3*W2 + 0.2*W3 + 0.1*W4
  ****************************************************************************/
 static void check_memory_leak()
 {
@@ -61,7 +87,7 @@ static void check_memory_leak()
 static void print_task_mem_stats(void)
 {
   int i;
-  char buffer[25] = {0};
+  char buffer[32] = {0};
   struct task_mem_stats *tms = NULL;
   irqstate_t flags;
 
@@ -69,23 +95,29 @@ static void print_task_mem_stats(void)
   DEBUG("进入临界区...\n");
   list_for_every_entry(&task_mem_status_list, tms, struct task_mem_stats, node_task_mem)
   {
-    syslog(LOG_INFO, "\n================leak_info===============\n");
-    syslog(LOG_INFO, "进程号:%u\n", tms->pid);
-    syslog(LOG_INFO, "检测次数:%u\n", tms->count);
-    syslog(LOG_INFO, "总分配次数:%u\n", tms->total_allocs);
-    syslog(LOG_INFO, "未释放内存数:%u\n", tms->active_allocs);
-    syslog(LOG_INFO, "分配总大小:%lu\n", tms->total_size);
-    i = timestamp_to_utc_str(tms->timestamp, buffer, sizeof(buffer));
-    if (!i)
-    {
-      syslog(LOG_INFO, "首次分配时间:%s\n", buffer);
-    }
-    syslog(LOG_INFO, "=================leak_info=============\n\n");
+    syslog(LOG_INFO,
+           "\n" SEPARATOR "\n"
+           "  Leak Detection Report       \n" SEPARATOR "\n" LOG_FMT // 进程号
+               LOG_FMT                                               // 检测次数
+                   LOG_FMT                                           // 总分配次数
+                       LOG_FMT                                       // 未释放内存数
+                           LOG_SIZE_FMT                              // 分配总大小
+           LOG_STR_FMT                                               // 应用名称
+           "%s\n"                                                    // 时间戳（带格式判断）
+           SEPARATOR "\n",
+           "Process ID", tms->pid,
+           "Check Count", tms->count,
+           "Total Allocs", tms->total_allocs,
+           "Active Allocs", tms->active_allocs,
+           "Total Size", tms->total_size,
+           "Application", tms->appname,
+           (i = format_timestamp(tms->timestamp, buffer, 1)) ? "" : "First Alloc Time:  ", buffer);
   }
   DEBUG("退出临界区...\n");
   spin_unlock_irqrestore(&tms_list_lock, flags);
 }
 
+// 可能需要选择使用多个结构体
 static void leak_detection_worker(FAR void *arg)
 {
   bool isEmpty;
@@ -99,7 +131,7 @@ static void leak_detection_worker(FAR void *arg)
   DEBUG("Task_List:%s\n", isEmpty ? "empty" : "not empty");
   if (!isEmpty)
   {
-    // print_task_mem_stats();
+    print_task_mem_stats();
     /* 2. 重新提交工作，实现周期性触发 */
     check_memory_leak();
     DEBUG("leak_detection_worker is working right now...\n");
@@ -114,17 +146,6 @@ static void leak_detection_worker(FAR void *arg)
     DEBUG("The Linkedlist is empty, leak detection ceased...\n");
   }
 }
-
-// 这函数感觉其实没有什么用
-// void init_leak_detection(void)
-// {
-//   /** 3s后开始执行 挂起3s后开始执行 */
-//   work_queue(HPWORK,
-//              &g_leak_detection_work,
-//              leak_detection_worker,
-//              NULL,
-//              MSEC2TICK(3000));
-// }
 
 /****************************************************************************
  *  add_metadata_to_task_mem_stats();
@@ -179,6 +200,7 @@ int add_metadata_to_task_mem_stats(struct memchecker_metadata *metadata)
   {
     return -1;
   }
+  memcpy(tms->appname, metadata->file, strlen(metadata->file));
   tms->count = 0;
   tms->pid = pid;
   tms->total_allocs = 1;

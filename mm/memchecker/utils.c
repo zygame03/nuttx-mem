@@ -57,3 +57,43 @@ int timestamp_to_utc_str(uint64_t timestamp, char *buffer, size_t buf_size)
 
   return 0;
 }
+
+/**
+ * @brief 将秒级时间戳转换为格式化字符串
+ * @param timestamp 输入的时间戳（秒，从1970-01-01起）
+ * @param buffer 输出缓冲区（至少20字节）
+ * @return 成功返回0，失败返回-1
+ */
+int format_timestamp(time_t timestamp, char *buffer, int choice)
+{
+  struct tm tm_struct;
+
+  // 将时间戳转换为UTC时间（若需本地时间，使用 localtime_r()）
+  switch (choice)
+  {
+  case 0:
+    if (gmtime_r(&timestamp, &tm_struct) == NULL)
+    {
+      return -1; // 时间转换失败
+    }
+    break;
+  case 1:
+    if (localtime_r(&timestamp, &tm_struct) == NULL)
+    {
+      return -1; // 时间转换失败
+    }
+    break;
+  }
+
+  // 格式化输出：YYYY-MM-DD HH:MM:SS
+  snprintf(buffer, 20,
+           "%04d-%02d-%02d %02d:%02d:%02d",
+           tm_struct.tm_year + 1900, // 年份从1900开始
+           tm_struct.tm_mon + 1,     // 月份范围0-11 → 1-12
+           tm_struct.tm_mday,
+           tm_struct.tm_hour,
+           tm_struct.tm_min,
+           tm_struct.tm_sec);
+
+  return 0;
+}

@@ -31,6 +31,8 @@ struct task_mem_stats
 
   uint32_t count; // 对应进程检测次数  y
 
+  char appname[30];
+
   // enum tstate_e state; // 对应进程状态
 
   uint64_t timestamp; // 对应首次内存对象分配时间戳
