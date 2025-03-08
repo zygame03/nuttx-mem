@@ -37,12 +37,12 @@ enum memchecker_state
 
 enum memchecker_error_type
 {
+  ERROR_NONE,
   ERROR_OUT_OF_BOUDNDS,
   ERROR_USE_AFTER_FREE,
   ERROR_DOUBLE_FREE,
   ERROR_INVALID_FREE,
   ERROR_MEMORY_LEAK,
-  ERROR_NONE,
 };
 
 struct memchecker_metadata
@@ -57,7 +57,9 @@ struct memchecker_metadata
 
   size_t size;
 
-  time_t ts;
+  uint32_t alloc_ts;
+
+  uint32_t free_ts;
 
   pid_t pid;
 
@@ -75,5 +77,7 @@ void memchecker_init(void);
 struct memchecker_metadata *index_to_metadata(int index);
 
 struct memchecker_metadata *addr_to_metadata(unsigned long addr);
+
+int pid_to_metadata(pid_t pid, struct memchecker_metadata *buffer[]);
 
 #endif /* __INCLUDE_NUTTX_MM_MEMCHECKER_H */

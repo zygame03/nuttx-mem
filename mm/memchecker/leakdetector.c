@@ -3,12 +3,12 @@
  ****************************************************************************/
 #include <sched.h>
 #include <nuttx/mm/memchecker.h>
-#include <nuttx/mm/leakdetector.h>
-#include <nuttx/mm/utils.h>
-#include <spinlock.h>
-#include <nuttx/mm/mmdebug.h>
+#include <nuttx/spinlock.h>
 #include <syslog.h>
 #include <nuttx/mutex.h>
+#include "leakdetector.h"
+#include "utils.h"
+#include "mmdebug.h"
 
 /****************************************************************************
  *  此处取消钩子函数

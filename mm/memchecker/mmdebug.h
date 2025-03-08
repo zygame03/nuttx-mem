@@ -2,7 +2,7 @@
 #define __INCLUDE_NUTTX_MMDEBUG_H
 
 #include <stdio.h>
-#include <nuttx/mm/utils.h>
+#include "utils.h"
 
 #ifdef DEBUG_ENABLE
 #define DEBUG(fmt, ...)                                                                            \
