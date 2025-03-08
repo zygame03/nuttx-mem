@@ -7,6 +7,7 @@
 #include <sched.h>
 #include <nuttx/mm/memchecker.h>
 #include <nuttx/mm/mmdebug.h>
+#include <nuttx/spinlock.h>
 
 #include <syslog.h>
 #include <execinfo.h>
@@ -38,6 +39,7 @@
 /****************************************************************************
  * Private Types
  ****************************************************************************/
+extern spinlock_t tms_list_lock;
 
 struct memchecker_metadata metadata_list[MEMCHECKER_PAGE_NUMBER];
 
@@ -398,8 +400,9 @@ void memchecker_init(void)
   list_initialize(&task_mem_status_list);
   list_initialize(&free_list);
   list_initialize(&error_list);
-  memchecker_init_pool();
-  /**  此处可以加上条件编译  用于判断是否启动内存泄漏检查 **/
 
-  init_leak_detection();
+  /** 自旋锁初始化 */
+  spin_lock_init(&tms_list_lock);
+  /** 任务内存信息链表自旋锁 */
+  memchecker_init_pool();
 }

@@ -21,14 +21,10 @@ const char *COLOR_TABLE[] = {
 int timestamp_to_utc_str(uint64_t timestamp, char *buffer, size_t buf_size)
 {
   /* 1. 验证输入有效性 */
-  DEBUG("timestamp:%lu\n", timestamp);
   if (buf_size < 20)
   { // "YYYY-MM-DD HH:MM:SS\0" 需要至少 20 字节
-    DEBUG();
     return -1;
   }
-  DEBUG();
-
   /* 2. 转换为 struct tm（UTC 时间）*/
   time_t raw_time = (time_t)timestamp;
   struct tm timeinfo;
@@ -39,7 +35,6 @@ int timestamp_to_utc_str(uint64_t timestamp, char *buffer, size_t buf_size)
   {
     return -1;
   }
-  DEBUG();
 #else
   /* 注意：标准 gmtime 非线程安全 */
   struct tm *tmp = gmtime(&raw_time);
@@ -48,7 +43,6 @@ int timestamp_to_utc_str(uint64_t timestamp, char *buffer, size_t buf_size)
     return -1;
   }
   memcpy(&timeinfo, tmp, sizeof(struct tm));
-  DEBUG();
 #endif
 
   /* 3. 格式化输出 */
