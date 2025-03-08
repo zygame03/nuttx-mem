@@ -44,6 +44,7 @@ extern struct list_node task_mem_status_list;
 /****************************************************************************
  * Private Types
  ****************************************************************************/
+extern spinlock_t tms_list_lock;
 
 static struct memchecker_metadata metadata_list[MEMCHECKER_PAGE_NUMBER];
 
@@ -433,9 +434,15 @@ void memchecker_init(void)
   list_initialize(&allocated_list);
   list_initialize(&freed_list);
   list_initialize(&error_list);
+
+
   memchecker_init_pool();
 
 #ifdef CONFIG_MM_MEMCHECKER_LEAKDETECTOR
+  /** 自旋锁初始化 */
+  spin_lock_init(&tms_list_lock);
+  /** 任务内存信息链表自旋锁 */
+  
   list_initialize(&task_mem_status_list);
   init_leak_detection();
 #endif  

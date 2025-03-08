@@ -17,6 +17,7 @@
  ****************************************************************************/
 #define ALLOWED_GAP_INIT (5)
 #define ALLOWED_GAP_RUNNING (3)
+#define MAX_SIZE (100)
 
 /****************************************************************************
  *  process
@@ -29,6 +30,8 @@ struct task_mem_stats
   uint32_t weighted_value; // 权值
 
   uint32_t count; // 对应进程检测次数  y
+
+  char appname[30];
 
   // enum tstate_e state; // 对应进程状态
 

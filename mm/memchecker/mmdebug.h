@@ -14,4 +14,14 @@
 #else
 #define DEBUG(...)
 #endif
+#ifdef WARN_ENABLE
+#define WARN(fmt, ...)                                                                            \
+  do                                                                                              \
+  {                                                                                               \
+    fprintf(stderr, "%s[WARN] %s:%d: " fmt "%s\n",                                                \
+            COLOR_TABLE[COLOR_RED], __FILE__, __LINE__, ##__VA_ARGS__, COLOR_TABLE[COLOR_RESET]); \
+  } while (0)
+#else
+#define WARN(...)
+#endif
 #endif

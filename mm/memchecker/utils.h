@@ -1,6 +1,9 @@
 #ifndef __INCLUDE_NUTTX_MM_UTILS_H
 #define __INCLUDE_NUTTX_MM_UTILS_H
 
+/****************************************************************************
+ * Included Files
+ ****************************************************************************/
 #include <time.h>
 #include <stdio.h>
 
@@ -30,4 +33,11 @@ extern const char *COLOR_TABLE[];
  ****************************************************************************/
 int timestamp_to_utc_str(uint64_t timestamp, char *buffer, size_t buf_size);
 
+/****************************************************************************
+ * @brief  对应秒级时间戳，此时对精度的要求并不算高
+ *  choice 目前支持两种选择
+ *    choice == 0 ===>UTC时间
+ *    choice == 1 ===>localtime
+ ****************************************************************************/
+int format_timestamp(time_t timestamp, char *buffer, int choice);
 #endif
