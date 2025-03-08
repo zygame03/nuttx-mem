@@ -9,6 +9,8 @@
 #include <nuttx/mm/mmdebug.h>
 #include <syslog.h>
 #include <nuttx/mutex.h>
+#include <nuttx/clock.h>
+#include <nuttx/lib/math.h>
 
 /****************************************************************************
  * 用于调试输出
@@ -59,27 +61,68 @@ volatile spinlock_t tms_list_lock;
  *
  *  leak_score = 0.4*W1 + 0.3*W2 + 0.2*W3 + 0.1*W4
  ****************************************************************************/
+static void test_float()
+{
+  float a1 = 3.1415;
+  float a2 = 3.5656;
+  float a3;
+  float a4;
+  uint64_t t1 = clock_systime_ticks();
+  for (int i = 0; i < 50; i++)
+  {
+    a3 = a2 * a1;
+    a4 = a2 / a1;
+  }
+  uint64_t t2 = clock_systime_ticks();
+  uint64_t delta_ticks = t2 - t1;
+  DEBUG("time: %lu\n", delta_ticks);
+}
+
+static void test_simu()
+{
+  // float a1 = 3.1415;
+  uint16_t a1 = (31415 << 15) / 10000;
+  uint16_t a2 = (35656 << 15) / 10000;
+  uint16_t a3;
+  uint16_t a4;
+  uint64_t t1 = clock_systime_ticks();
+  for (int i = 0; i < 50; i++)
+  {
+    a3 = a2 * a1;
+    a4 = a2 / a1;
+  }
+  uint64_t t2 = clock_systime_ticks();
+  uint64_t delta_ticks = t2 - t1;
+  DEBUG("time: %lu\n", delta_ticks);
+}
+
+static uint64_t get_average_active_age(pid_t pid)
+{
+  return 50;
+}
+
 static void check_memory_leak()
 {
   struct task_mem_stats *tms = NULL;
   irqstate_t flags;
+  double w1, w2, w3, w4;
+  double avg_age, alloc_free_ratio, mem_growth; // 暂时还没有加上调用栈相关的
 
+  // uint64_s
+  // uint64_t
+  test_float();
+  test_simu();
   flags = spin_lock_irqsave(&tms_list_lock);
-  DEBUG("进入临界区...\n");
+  DEBUG("in ---check_memory_leak()...\n");
   list_for_every_entry(&task_mem_status_list, tms, struct task_mem_stats, node_task_mem)
   {
-    tms->count++;
-    if (tms->active_allocs > 5)
-    {
-      WARN("进程 %lu存在过多未释放的内存,可能存在内存泄漏!\n");
-    }
-
-    if (tms->total_size > 40)
-    {
-      WARN("进程 %lu申请的内存过大,可能存在内存泄漏!\n");
-    }
+    // 次数需要自增
+    tms->count += 1;
+    avg_age = get_average_active_age(tms->pid);
+    // 此处基准时间设置为10s
+    // w1 = log2ceil((avg_age / 10));
   }
-  DEBUG("退出临界区...\n");
+  DEBUG("out ---check_memory_leak()...\n");
   spin_unlock_irqrestore(&tms_list_lock, flags);
 }
 
@@ -169,7 +212,17 @@ static struct task_mem_stats *create_task_mem_stats(void)
   memset(p, 0, len);
   return p;
 }
-
+/****************************************************************************
+ * Name: add_metadata_to_task_mem_stats
+ *
+ * Description:
+ *    update task_mem_statas with metadata from memchecker
+ * Input Parameters:
+ *   metadata - struct memchecker_metadata *metadata
+ *
+ * Returned Value:
+ *  return  0,  indicates  succeeding to updatate task_mem_statas or failing to update
+ ****************************************************************************/
 int add_metadata_to_task_mem_stats(struct memchecker_metadata *metadata)
 {
   pid_t pid;
@@ -177,8 +230,10 @@ int add_metadata_to_task_mem_stats(struct memchecker_metadata *metadata)
   irqstate_t flags;
 
   pid = metadata->pid;
+  test_simu();
+  test_float();
   flags = spin_lock_irqsave(&tms_list_lock);
-  DEBUG("进入临界区...\n");
+  DEBUG("in...\n");
   list_for_every_entry(&task_mem_status_list, tms, struct task_mem_stats, node_task_mem)
   {
     /** 非首次创建 */
@@ -188,11 +243,11 @@ int add_metadata_to_task_mem_stats(struct memchecker_metadata *metadata)
       tms->active_allocs++;
       tms->total_size += metadata->size;
       spin_unlock_irqrestore(&tms_list_lock, flags);
-      DEBUG("退出临界区...\n");
+      DEBUG("out...\n");
       return 0;
     }
   }
-  DEBUG("退出临界区...\n");
+  DEBUG("out...\n");
   spin_unlock_irqrestore(&tms_list_lock, flags);
   // 对应首次创建task_mem_stats
   tms = create_task_mem_stats();
