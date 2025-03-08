@@ -1,5 +1,5 @@
-#include <nuttx/mm/utils.h>
-#include <nuttx/mm/mmdebug.h>
+#include "mmdebug.h"
+#include "utils.h"
 
 const char *COLOR_TABLE[] = {
     "\033[0m",  // 重置

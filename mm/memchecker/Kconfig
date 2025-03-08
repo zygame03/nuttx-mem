@@ -27,3 +27,12 @@ config MM_MEMCHECKER_PAGE_NUMBER
 	depends on MM_MEMCHECKER
 	---help---
 		Number of pages to be checked.
+
+config _MM_MEMCHECKER_LEAKDETECTOR
+	bool "Leak Detector"
+	default n
+	depends on MM_MEMCHECKER
+	---help---
+		Leak Detector is a tool for detecting memory leaks in NuttX.
+		After turn on this option, Please add -DCONFIG_MEMCHECK_LEAKDETECTOR to
+		Kconfig and rebuild NuttX.
