@@ -25,25 +25,27 @@
  ****************************************************************************/
 struct task_mem_stats
 {
-  uint32_t score; // 进程实时得分分值
+  uint8_t score; // 进程实时得分分值,通过权值计算得到  ---限制其大小
 
-  uint32_t weighted_value; // 权值
+  uint8_t warning_count; // 总共的报警次数
 
-  uint32_t count; // 对应进程检测次数  y
+  uint16_t weighted_value; // 权值总和--- 可能通过此次得分与上次的差异来加强检测
 
-  char appname[30];
+  uint32_t count; // 对应进程检测次数
 
-  // enum tstate_e state; // 对应进程状态
+  char appname[32]; // 程序名
 
-  uint64_t timestamp; // 对应首次内存对象分配时间戳
+  uint64_t timestamp; // 每次检测时间
 
   pid_t pid; // 任务 ID y
 
-  uint32_t total_allocs; // 总分配次数 y
+  uint32_t total_allocs; // 总分配次数
 
-  uint32_t active_allocs; // 未释放的次数 y
+  uint32_t active_allocs; // 未释放的次数
 
-  uint64_t total_size; // 总分配大小 y
+  uint32_t total_size; // 总分配大小
+
+  uint32_t active_size; // 活跃的大小
 
   struct list_node node_task_mem; // 进程内存对象元数据链表
 };
@@ -51,9 +53,9 @@ struct task_mem_stats
 /****************************************************************************
  * work_queue leak detecting
  ****************************************************************************/
-
 void init_leak_detection(void);
 
 int add_metadata_to_task_mem_stats(struct memchecker_metadata *metadata);
 
+int update_task_mem_stats_when_free(struct memchecker_metadata *metadata);
 #endif

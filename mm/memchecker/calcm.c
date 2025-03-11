@@ -2,79 +2,113 @@
  * Included Files
  ****************************************************************************/
 #include <nuttx/mm/memchecker.h>
-#include <nuttx/mm/calcm.h>
-#include <nuttx/mm/mmdebug.h>
+#include "calcm.h"
+#include "mmdebug.h"
+#include <syslog.h>
+#include "utils.h"
+
+/** 活跃内存的基准大小   64 */
+#define MEMORY_BLOCK_BASE MM_MEMCHECKER_DATA_SIZE
+#define MEMORY_TIME_BASE 500
+
+enum WEIGHT
+{
+  WEIGHT_UNFREED_COUNT,
+  WEIGHT_UNFREED_SIZE_RATE,
+  WEIGHT_AGE,
+  WEIGHT_NUM
+};
+
+/**  指定权值 */
+static int WEIGHT_TABLE[WEIGHT_NUM] = {
+    [WEIGHT_UNFREED_COUNT] = 10,
+    [WEIGHT_UNFREED_SIZE_RATE] = 5,
+    [WEIGHT_AGE] = 10};
+
+enum LEAK_ERR
+{
+  UNFREEED_NUM,
+  UNFREEED_CHUNK,
+  HIGH_GROWTH_RATE,
+  LEAK,
+};
+
+void print_leak_err_info(enum LEAK_ERR err)
+{
+  switch (err)
+  {
+  case UNFREEED_NUM:
+    syslog(LOG_INFO, "%s未释放的内存数量超出安全值!%s\n", COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
+    break;
+  case UNFREEED_CHUNK:
+    syslog(LOG_INFO, "%s存在大量内存未释放!%s\n", COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
+    break;
+  case HIGH_GROWTH_RATE:
+    syslog(LOG_INFO, "%s内存申请增速过快!%s\n", COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
+    break;
+  case LEAK:
+    syslog(LOG_INFO, "%s内存存在泄露!%s\n", COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
+    break;
+  }
+}
+
+void basic_test()
+{
+}
 
 /****************************************************************************
- * calc_W1 --- 平均计算时间
- * avg_age_ticks ---  节拍
- * tick_rate   --- 系统时钟频率
- * 计算公式:
- *  avg_age = Σ(current_time - alloc_ts)/unreleased_count + 1
- *  W1 = log2(avg_age / 基准时间)
+ * Name: cal_unfreed_count
+ *  计算方式: 未释放次数 * (10  +  (内存块大小 / 基准块大小))
+ *  暂时定位64字节
+ *  计算方式2: 未释放次数 * (10  + 2^ (活跃内存 / 活跃的基准警戒大小) )
+ * Description:
+ *      calculate weighed value with unfreed_count in task
+ * Input Parameters:
+ *   metadata - struct memchecker_metadata *metadata
+ *
+ * Returned Value:
+ *  return  an integer,  indicates  succeeding to updatate task_mem_statas or failing to update
+ *  return -1 , ---> fail
  ****************************************************************************/
-/**
- * @brief 计算存活时间权重
- * @param proc 进程元数据指针
- * @param now_ticks 当前系统tick数
- * @param tick_rate 每秒tick数（从CLOCKS_PER_SEC获取）
- * @return W1权重值（0~2）
- */
-/***
- *
- * Todo: 平均时长获取(pid  === > + = 内存驻留时间(ticks) === > 时间(s)   )
- *
- *
- */
-float calc_W1(struct task_mem_stats *tms, uint32_t now_ticks, uint32_t tick_rate)
+int cal_unfreed_count(struct task_mem_stats *tms)
 {
-  // if (list_empty(&proc->unreleased_list))
-  //   return 0.0f;
-  /** 如果当前进程全部都已经释放则权重返回为0 */
-  if (!tms->active_allocs)
+  /** 分别对应未释放次数， 未释放内存块大小，以及最终的权值 */
+  int unfreed_count, unfreed_size, ufc_val;
+
+  if (!tms)
   {
-    return 0.0f;
+    WARN("传入的tms为空!!!\n");
+    return -1;
   }
-  // // 计算未释放块的平均存活时间（秒）
-  // float total_age = 0.0f;
-  // struct mem_meta *pos;
-  // list_for_each_entry(pos, &proc->unreleased_list, list)
-  // {
-  //   total_age += (now_ticks - pos->timestamp) / (float)tick_rate;
-  // }
-  // float avg_age = total_age / list_length(&proc->unreleased_list);
-  float total_ticks_age = 0.0f;
-  total_ticks_age = get_all_age(tms->pid); // Todo：通过号获得，节拍数和;
-                                           // 节拍数处理得到秒数
-  // 通过以下计算返回权值
-  // // 对数增长权重：log2(avg_age/10 + 1)
-  // return log2f(avg_age / 10.0f + 1.0f);
-  // 通过log2f 返回权值
+  /** 未释放次数 * (10  +  (内存块大小 / 基准块大小)) */
+  unfreed_count = tms->active_allocs;
+  unfreed_size = tms->active_size;
+
+  ufc_val = (int)(unfreed_count * (WEIGHT_TABLE[WEIGHT_UNFREED_COUNT] + (float)unfreed_size / MEMORY_BLOCK_BASE));
+  INFO("---权值计算过程输出---\n");
+  INFO("unfreed_count: %d\n", unfreed_count);
+  INFO("unfreed_size: %d\n", unfreed_size);
+  INFO("计算公式: %d * (%d + (%d / %d)) =%d", unfreed_count, WEIGHT_TABLE[WEIGHT_UNFREED_COUNT], unfreed_size, MEMORY_BLOCK_BASE, ufc_val);
+
+  return ufc_val;
 }
 
-/**
- * @brief 计算内存失衡权重
- * @param proc 进程元数据指针
- * @return W2权重值（0~1）
- */
-float calc_W2(struct task_mem_stats *tms)
+/****************************************************************************
+ * Name:cal_unfreed_chunck
+ *  计算方式: 未释放次数 * (10  +  (内存块大小 / 基准块大小))
+ *  暂时定位64字节
+ *  计算方式2: 未释放次数 * (10  + 2^ (活跃内存 / 活跃的基准警戒大小) )
+ * Description:
+ *      calculate weighed value with unfreed_count in task
+ * Input Parameters:
+ *   metadata - struct memchecker_metadata *metadata
+ *
+ * Returned Value:
+ *  return  an integer,  indicates  succeeding to updatate task_mem_statas or failing to update
+ *  return -1 , ---> fail
+ ****************************************************************************/
+int cal_unfreed_chunck(struct task_mem_stats *tms)
 {
-  // 动态计算申请/释放比
-  float ratio = (tms->total_allocs - tms->active_allocs) / (tms->total_allocs + 1.0f);
-
-  // Sigmoid激活函数强化特征
-  return 1.0f / (1.0f + expf(-5.0f * (ratio - 0.3f)));
-}
-
-/** 这里待检测 */
-float calc_W3(struct task_mem_stats *tms, float check_interval_sec, float mem_guard_line)
-{
-  if (check_interval_sec <= 0)
-    return 0.0f;
-
-  // 计算单位时间内存增长量（MB/s）
-  float mem_growth = (proc->current_mem_mb - proc->last_mem_mb) / check_interval_sec;
-
-  // 双曲正切归一化
-  return tanhf(mem_growth / mem_guard_line);
+  /** 获取内存的存活时间 * 内存的大小量 /  */
+  /** 存活时间 * 大小 */
 }

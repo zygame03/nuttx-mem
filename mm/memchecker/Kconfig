@@ -28,7 +28,7 @@ config MM_MEMCHECKER_PAGE_NUMBER
 	---help---
 		Number of pages to be checked.
 
-config _MM_MEMCHECKER_LEAKDETECTOR
+config MM_MEMCHECKER_LEAKDETECTOR
 	bool "Leak Detector"
 	default n
 	depends on MM_MEMCHECKER

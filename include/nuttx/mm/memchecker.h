@@ -80,4 +80,6 @@ struct memchecker_metadata *addr_to_metadata(unsigned long addr);
 
 int pid_to_metadata(pid_t pid, struct memchecker_metadata *buffer[]);
 
+int get_active_size_multi_time(pid_t pid);
+
 #endif /* __INCLUDE_NUTTX_MM_MEMCHECKER_H */

@@ -4,6 +4,7 @@
 
 #include <nuttx/config.h>
 #include <nuttx/signal.h>
+#include <nuttx/spinlock.h>
 #include <sched.h>
 #include <nuttx/mm/memchecker.h>
 #include <syslog.h>
@@ -11,9 +12,11 @@
 #include <nuttx/allsyms.h>
 #include <nuttx/symtab.h>
 #include <nuttx/arch.h>
+#include "leakdetector.h"
 #include <sys/time.h>
 #include <nuttx/clock.h>
 #include <time.h>
+#include <nuttx/atomic.h>
 #include "mmdebug.h"
 
 /****************************************************************************
@@ -31,7 +34,7 @@
   (MEMCHECKER_DATA_SIZE + 2 * MEMCHECKER_BOUND_SIZE)
 #define MEMCHECKER_POOL_SIZE (MEMCHECKER_PAGE_NUMBER * MEMCHECKER_PAGE_SIZE)
 
-#define MEMCHECKER_TIMEOUT 360000 
+#define MEMCHECKER_TIMEOUT 360000
 
 /****************************************************************************
  * Global Variables
@@ -65,7 +68,7 @@ static const char *error_msg[] = {"no error",
                                   "Invalid free",
                                   "Memory leak"};
 
-// static struct work_s g_memcheck_work;  
+// static struct work_s g_memcheck_work;
 
 // static int process_list[MAX_TASKS];
 
@@ -92,22 +95,22 @@ static void memchecker_report(struct memchecker_metadata *metadata)
   syslog(LOG_ERR, "====================MEMCHECKER========================");
   syslog(LOG_ERR, "BUG: %s", error_msg[metadata->error_type]);
 
-  syslog(LOG_ERR, "Address: %p - %p", 
-    (void *)metadata->addr - MEMCHECKER_BOUND_SIZE, 
-    (void *)metadata->addr + metadata->size + MEMCHECKER_BOUND_SIZE);
-  //system
+  syslog(LOG_ERR, "Address: %p - %p",
+         (void *)metadata->addr - MEMCHECKER_BOUND_SIZE,
+         (void *)metadata->addr + metadata->size + MEMCHECKER_BOUND_SIZE);
+  // system
   syslog(LOG_ERR, "CPU: 0, PID: %d, Taskname: %s", pid, task->name);
-  
+
   struct tm *time_info = localtime(&metadata->alloc_ts);
   char buffer[80];
   strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", time_info);
   printf("Allocation time: %s\n", buffer);
-  
+
   time_info = localtime(&metadata->free_ts);
   strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", time_info);
   printf("Free time: %s\n", buffer);
-  
-  syslog(LOG_ERR, "tim: %lu", metadata->alloc_ts);
+
+  syslog(LOG_ERR, "tim: %u", metadata->alloc_ts);
 
   // print_metadata(metadata);
   syslog(LOG_ERR, "Backtrace:");
@@ -115,18 +118,18 @@ static void memchecker_report(struct memchecker_metadata *metadata)
   struct symtab_s *symbol;
   size_t size;
 
-  for(int i = 0; i < metadata->stack_depth; i++)
+  for (int i = 0; i < metadata->stack_depth; i++)
   {
     symbol = (struct symtab_s *)allsyms_findbyvalue((void *)metadata->stack[i], &size);
     if (symbol != NULL)
-      {
-        syslog(LOG_ERR, "[%2d] [%p] %-16s", i, 
-              (void *)metadata->stack[i], symbol->sym_name);
-      }
+    {
+      syslog(LOG_ERR, "[%2d] [%p] %-16s", i,
+             (void *)metadata->stack[i], symbol->sym_name);
+    }
     else
-      {
-        syslog(LOG_ERR, "[%d] %p", i, (void *)metadata->stack[i]);
-      } 
+    {
+      syslog(LOG_ERR, "[%d] %p", i, (void *)metadata->stack[i]);
+    }
     // sleep(1);
   }
 
@@ -141,117 +144,117 @@ static bool is_memchecker_addr(unsigned long addr)
 {
   if (addr >= (unsigned long)memchecker_pool &&
       addr < (unsigned long)memchecker_pool + MEMCHECKER_POOL_SIZE)
-    {
-      return true;
-    }
+  {
+    return true;
+  }
   return false;
 }
 
 static void memchecker_alloc_pool(void)
 {
   memchecker_pool = (char *)malloc(MEMCHECKER_POOL_SIZE);
-  if(!memchecker_pool)
-    {
-      syslog(LOG_ERR, "Memchecker pool init failed");
-      return; 
-    }
+  if (!memchecker_pool)
+  {
+    syslog(LOG_ERR, "Memchecker pool init failed");
+    return;
+  }
   memset(memchecker_pool, 0, MEMCHECKER_POOL_SIZE);
 }
 
 static void memchecker_init_pool(void)
 {
   memchecker_alloc_pool();
-  if(!memchecker_pool)
-    {
-      return;
-    }
-  
-  for(int i = 0; i < MEMCHECKER_PAGE_NUMBER; i++)
-    {
-      struct memchecker_metadata *metadata = &metadata_list[i];
-      list_initialize(&metadata->node);
-      list_add_tail(&usable_list, &metadata->node);
-      metadata->addr = (unsigned long)memchecker_pool + 
-        i * MEMCHECKER_PAGE_SIZE + MEMCHECKER_BOUND_SIZE;
-    }
+  if (!memchecker_pool)
+  {
+    return;
+  }
+
+  for (int i = 0; i < MEMCHECKER_PAGE_NUMBER; i++)
+  {
+    struct memchecker_metadata *metadata = &metadata_list[i];
+    list_initialize(&metadata->node);
+    list_add_tail(&usable_list, &metadata->node);
+    metadata->addr = (unsigned long)memchecker_pool +
+                     i * MEMCHECKER_PAGE_SIZE + MEMCHECKER_BOUND_SIZE;
+  }
 }
 
 static bool set_canary_byte(uint8_t *addr)
 {
-	*addr = BYTECHECKER_CANARY_PATTERN(addr);
-	return true;
+  *addr = BYTECHECKER_CANARY_PATTERN(addr);
+  return true;
 }
 
 static bool check_canary_byte(uint8_t *addr)
 {
-	if (*addr == BYTECHECKER_CANARY_PATTERN(addr))
-	  {
-		  return true;
-    }
-	return false;
+  if (*addr == BYTECHECKER_CANARY_PATTERN(addr))
+  {
+    return true;
+  }
+  return false;
 }
 
-static void for_each_canary(struct memchecker_metadata *metadata, 
+static void for_each_canary(struct memchecker_metadata *metadata,
                             bool (*fn)(uint8_t *))
 {
-	unsigned long addr;
-	for (addr = metadata->addr - MEMCHECKER_BOUND_SIZE;
-	     addr < metadata->addr; addr++)
-	  {
-		  if (!fn((uint8_t *)addr))
-		    {
-		      metadata->state = MEMCHECKER_ERROR;
-		      metadata->error_type = ERROR_OUT_OF_BOUDNDS;
-          memchecker_report(metadata);
-		    	break;
-       	}
-	  }
-  
-  if(metadata->state == MEMCHECKER_FREED)
+  unsigned long addr;
+  for (addr = metadata->addr - MEMCHECKER_BOUND_SIZE;
+       addr < metadata->addr; addr++)
+  {
+    if (!fn((uint8_t *)addr))
     {
-      for (addr = metadata->addr;addr < metadata->addr + metadata->size;
-           addr++)
-	      {
-	        if (!fn((uint8_t *)addr))
-	          {
-	            metadata->state = MEMCHECKER_ERROR;
-	            metadata->error_type = ERROR_USE_AFTER_FREE;
-              memchecker_report(metadata);
-			        break;
-		        }
-      	}
+      metadata->state = MEMCHECKER_ERROR;
+      metadata->error_type = ERROR_OUT_OF_BOUDNDS;
+      memchecker_report(metadata);
+      break;
     }
-  
-	for (addr = metadata->addr + metadata->size;
-	     addr < metadata->addr + MEMCHECKER_DATA_SIZE + MEMCHECKER_BOUND_SIZE;
+  }
+
+  if (metadata->state == MEMCHECKER_FREED)
+  {
+    for (addr = metadata->addr; addr < metadata->addr + metadata->size;
+         addr++)
+    {
+      if (!fn((uint8_t *)addr))
+      {
+        metadata->state = MEMCHECKER_ERROR;
+        metadata->error_type = ERROR_USE_AFTER_FREE;
+        memchecker_report(metadata);
+        break;
+      }
+    }
+  }
+
+  for (addr = metadata->addr + metadata->size;
+       addr < metadata->addr + MEMCHECKER_DATA_SIZE + MEMCHECKER_BOUND_SIZE;
        addr++)
-	  {
-	    if (!fn((uint8_t *)addr))
-	      {
-	        metadata->state = MEMCHECKER_ERROR;
-	        metadata->error_type = ERROR_OUT_OF_BOUDNDS;
-          memchecker_report(metadata);
-			    break;
-		    }
-  	}
+  {
+    if (!fn((uint8_t *)addr))
+    {
+      metadata->state = MEMCHECKER_ERROR;
+      metadata->error_type = ERROR_OUT_OF_BOUDNDS;
+      memchecker_report(metadata);
+      break;
+    }
+  }
 }
 
 static void *memchecker_guarded_alloc(const char *file, int line, size_t size)
 {
   struct memchecker_metadata *metadata = NULL;
 
-  if(!list_is_empty(&usable_list))
-    {
-      metadata = list_entry(usable_list.next, struct memchecker_metadata, node);
-      list_delete(&metadata->node);
-      list_add_tail(&allocated_list, &metadata->node);
-    }
-    
-  if(!metadata)
-    {
-      return malloc(size);
-    }
-  
+  if (!list_is_empty(&usable_list))
+  {
+    metadata = list_entry(usable_list.next, struct memchecker_metadata, node);
+    list_delete(&metadata->node);
+    list_add_tail(&allocated_list, &metadata->node);
+  }
+
+  if (!metadata)
+  {
+    return malloc(size);
+  }
+
   metadata->alloc_ts = clock_systime_ticks();
   metadata->size = size;
   metadata->state = MEMCHECKER_ALLOCATED;
@@ -260,43 +263,59 @@ static void *memchecker_guarded_alloc(const char *file, int line, size_t size)
   metadata->pid = getpid();
   strcpy(metadata->file, file);
   metadata->line = line;
-  metadata->stack_depth = 
-  up_backtrace(nxsched_get_tcb(metadata->pid), 
-               (void **)metadata->stack, 32, 0);
+  metadata->stack_depth =
+      up_backtrace(nxsched_get_tcb(metadata->pid),
+                   (void **)metadata->stack, 32, 0);
+#ifdef CONFIG_MM_MEMCHECKER_LEAKDETECTOR
+  int i;
+  i = add_metadata_to_task_mem_stats(metadata);
+  if (!i)
+  {
+    DEBUG("add_metadata_to_task_mem_stats --- 成功添加\n");
+  }
+#endif
 
   return (void *)metadata->addr;
 }
 
 static void memchecker_guarded_free(const char *file, int line, void *addr)
 {
-  struct memchecker_metadata *metadata = 
-  addr_to_metadata((unsigned long)addr);
-  
-  if(!metadata)
-    {
-      free((void *)addr);
-      return;
-    }
+  struct memchecker_metadata *metadata =
+      addr_to_metadata((unsigned long)addr);
+
+  if (!metadata)
+  {
+    free((void *)addr);
+    return;
+  }
+#ifdef CONFIG_MM_MEMCHECKER_LEAKDETECTOR
+  int i;
+  i = update_task_mem_stats_when_free(metadata);
+  if (!i)
+  {
+    DEBUG("free ---> changed tms\n");
+  }
+#endif
 
   metadata->free_ts = clock_systime_ticks();
-  for_each_canary(metadata, check_canary_byte);  
+  for_each_canary(metadata, check_canary_byte);
 
-  if(metadata->state == MEMCHECKER_ALLOCATED)
-    {
-      metadata->state = MEMCHECKER_FREED;
-      for_each_canary(metadata, set_canary_byte); 
-    }
+  if (metadata->state == MEMCHECKER_ALLOCATED)
+  {
+    metadata->state = MEMCHECKER_FREED;
+    for_each_canary(metadata, set_canary_byte);
+  }
   else
+  {
+    if (metadata->state != MEMCHECKER_ERROR)
     {
-      if(metadata->state != MEMCHECKER_ERROR)
-        {
-          list_delete_init(&metadata->node);
-          list_add_tail(&error_list, &metadata->node);
-        }
-      metadata->state = MEMCHECKER_ERROR;
-      metadata->error_type = ERROR_DOUBLE_FREE;
-      memchecker_report(metadata);
-    } 
+      list_delete_init(&metadata->node);
+      list_add_tail(&error_list, &metadata->node);
+    }
+    metadata->state = MEMCHECKER_ERROR;
+    metadata->error_type = ERROR_DOUBLE_FREE;
+    memchecker_report(metadata);
+  }
 }
 
 static void metadata_manager(void)
@@ -310,37 +329,37 @@ static void metadata_timeout(void)
   struct memchecker_metadata *metadata;
   struct list_node *node;
 
-  for(node = freed_list.next; node != &freed_list; node = node->next)
+  for (node = freed_list.next; node != &freed_list; node = node->next)
+  {
+    metadata = list_entry(node, struct memchecker_metadata, node);
+    if (now_ts - metadata->free_ts > MEMCHECKER_TIMEOUT)
     {
-      metadata = list_entry(node, struct memchecker_metadata, node);
-      if(now_ts - metadata->free_ts > MEMCHECKER_TIMEOUT) 
-        {
-          list_delete_init(&metadata->node);
-          list_add_tail(&usable_list, &metadata->node);
-        }
+      list_delete_init(&metadata->node);
+      list_add_tail(&usable_list, &metadata->node);
     }
+  }
 }
 
 static void metadata_error_operation(void)
 {
   return;
 }
-  
+
 /****************************************************************************
  * Public Functions
  ****************************************************************************/
 
 /****************************************************************************
  * Name: memchecker_malloc
- * 
+ *
  * Description:
  *   Allocate memory with memory checker.
- * 
+ *
  * Input Parameters:
  *   file - The file name of the caller.
  *   line - The line number of the caller.
  *   size - The size of the memory to be allocated.
- * 
+ *
  * Returned Value:
  *   On success, a pointer to the allocated memory is returned.
  *   On failure, NULL is returned.
@@ -350,35 +369,35 @@ void *memchecker_malloc(const char *file, int line, size_t size)
 {
   // 检查申请的内存大小
   if (size > MEMCHECKER_DATA_SIZE)
-    {
-      return malloc(size);
-    }
-    
+  {
+    return malloc(size);
+  }
+
   return memchecker_guarded_alloc(file, line, size);
 }
 
 /****************************************************************************
  * Name: memchecker_free
- * 
+ *
  * Description:
  *   Free memory with memory checker.
- * 
+ *
  * Input Parameters:
  *   file - The file name of the caller.
  *   line - The line number of the caller.
  *   addr - The address of the memory to be freed.
- * 
+ *
  * Returned Value:
  *   None.
  ****************************************************************************/
 
 void memchecker_free(const char *file, int line, const void *addr)
 {
-  if(!is_memchecker_addr((unsigned long)addr))
-    {
-      free((void *)addr);
-      return;
-    }
+  if (!is_memchecker_addr((unsigned long)addr))
+  {
+    free((void *)addr);
+    return;
+  }
 
   return memchecker_guarded_free(file, line, (void *)addr);
 }
@@ -390,10 +409,10 @@ struct memchecker_metadata *index_to_metadata(int index)
 
 struct memchecker_metadata *addr_to_metadata(unsigned long addr)
 {
-  if(!is_memchecker_addr(addr))
-    {
-      return NULL;
-    }
+  if (!is_memchecker_addr(addr))
+  {
+    return NULL;
+  }
 
   int index = (addr - (unsigned long)memchecker_pool) / MEMCHECKER_PAGE_SIZE;
   return index_to_metadata(index);
@@ -401,15 +420,15 @@ struct memchecker_metadata *addr_to_metadata(unsigned long addr)
 
 /****************************************************************************
  *  Name: pid_to_metadata
- * 
+ *
  *  Description:
  *    Get the metadata with pid.
  *    *from all metadata
- * 
+ *
  *  Input Parameters:
  *    pid - The pid of the task.
  *    metadata - The buffer to store the metadata.
- * 
+ *
  *  Returned Value:
  *    The number of metadata.
  *    return 0 if no metadata found.
@@ -418,13 +437,13 @@ struct memchecker_metadata *addr_to_metadata(unsigned long addr)
 int pid_to_metadata(pid_t pid, struct memchecker_metadata *buffer[])
 {
   int count = 0;
-  for(int i = 0; i < MEMCHECKER_PAGE_NUMBER; i++)
+  for (int i = 0; i < MEMCHECKER_PAGE_NUMBER; i++)
+  {
+    if (metadata_list[i].pid == pid)
     {
-      if(metadata_list[i].pid == pid)
-        {
-          buffer[count++] = &metadata_list[i];
-        }
+      buffer[count++] = &metadata_list[i];
     }
+  }
   return count;
 }
 
@@ -434,16 +453,29 @@ void memchecker_init(void)
   list_initialize(&allocated_list);
   list_initialize(&freed_list);
   list_initialize(&error_list);
-
-
   memchecker_init_pool();
-
 #ifdef CONFIG_MM_MEMCHECKER_LEAKDETECTOR
   /** 自旋锁初始化 */
   spin_lock_init(&tms_list_lock);
   /** 任务内存信息链表自旋锁 */
-  
   list_initialize(&task_mem_status_list);
+  /** 初始化内存泄漏检查 */
   init_leak_detection();
-#endif  
+#endif
+}
+
+/**  计算 每一个未释放内存的大小 * 存活时间 */
+int get_active_size_multi_time(pid_t pid)
+{
+  // 判断pid是否有效
+  struct tcb_s *task = NULL;
+
+  task = nxsched_get_tcb(pid);
+  if (!task)
+  {
+    WARN("注意代码逻辑性,此时进程已经失效,问题很大\n");
+    return -1;
+  }
+
+  /** 这里应该要对应memchecker链表中的加锁 */
 }
