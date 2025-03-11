@@ -40,6 +40,6 @@ int cal_unfreed_chunck(struct task_mem_stats *tms);
 
 /** 逻辑判断 内存活跃数量为0 但是却存在内存量 此时必然发生泄漏  */
 
-void basic_test();
+int is_basic_err(struct task_mem_stats *tms);
 
 #endif /* __INCLUDE_NUTTX_MM_GRAN_H */

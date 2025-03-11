@@ -104,6 +104,7 @@ static void check_memory_leak(void)
 {
   struct task_mem_stats *tms = NULL;
   irqstate_t flags;
+  uint64_t timestamp;
 
   if (is_task_list_empty())
   {
@@ -113,8 +114,23 @@ static void check_memory_leak(void)
 
   flags = spin_lock_irqsave(&tms_list_lock);
   DEBUG("in...\n");
+  /** 计算此次检查时间戳 */
+  timestamp = clock_systime_ticks();
   list_for_every_entry(&task_mem_status_list, tms, struct task_mem_stats, node_task_mem)
   {
+    /* 对应分值如果较低   比较安全*/
+    if (tms->score < 60)
+    {
+      if (timestamp - tms->check_timestamp < 1000)
+      {
+        INFO("跳过本次检查\n");
+        continue;
+      }
+      /**  确认这次检查的时间  */
+      tms->check_timestamp = timestamp;
+    }
+    /**  基本判断 如果i不为0的话代表有基础错误 */
+    /** 目前没有必要去考虑这个基本错误 */
     int ucv;
     tms->count += 1;
     /** 此次检测运算权值 */
@@ -154,11 +170,12 @@ static void print_task_mem_stats(void)
     syslog(LOG_INFO, "当前活跃内存量:%d\n", tms->active_size);
     syslog(LOG_INFO, "应用:%s\n", tms->appname);
 
-    i = timestamp_to_utc_str(tms->timestamp, buffer, sizeof(buffer));
-    if (!i)
-    {
-      syslog(LOG_INFO, "首次分配时间:%s\n", buffer);
-    }
+    /** 时间戳暂时放弃 */
+    // i = timestamp_to_utc_str(tms->timestamp, buffer, sizeof(buffer));
+    // if (!i)
+    // {
+    //   syslog(LOG_INFO, "首次分配时间:%s\n", buffer);
+    // }
     syslog(LOG_INFO, "=======================================\n\n");
   }
   spin_unlock_irqrestore(&tms_list_lock, flags);
@@ -260,14 +277,16 @@ int add_metadata_to_task_mem_stats(struct memchecker_metadata *metadata)
     DEBUG("tms:NULL\n");
     return -1;
   }
-  tms->count = 0;
+  tms->count = 1;
   tms->pid = pid;
   tms->total_allocs = 1;
   tms->active_allocs = 1;
   tms->total_size = metadata->size;
   tms->active_size += metadata->size;
   /** 直接记录创建时时间戳 */
-  tms->timestamp = clock_systime_ticks();
+  tms->check_timestamp = tms->init_timestamp = clock_systime_ticks();
+  /** 计算给定一个初始分分值 */
+  tms->score = 65;
   memcpy(tms->appname, metadata->file, 32);
   /** 初始化并插入链表中 */
   list_initialize(&tms->node_task_mem);

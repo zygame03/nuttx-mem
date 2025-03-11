@@ -8,7 +8,7 @@
 #include "utils.h"
 
 /** 活跃内存的基准大小   64 */
-#define MEMORY_BLOCK_BASE MM_MEMCHECKER_DATA_SIZE
+#define MEMORY_BLOCK_BASE CONFIG_MM_MEMCHECKER_DATA_SIZE
 #define MEMORY_TIME_BASE 500
 
 enum WEIGHT
@@ -31,6 +31,7 @@ enum LEAK_ERR
   UNFREEED_CHUNK,
   HIGH_GROWTH_RATE,
   LEAK,
+  LEAK_ERR_NUM
 };
 
 void print_leak_err_info(enum LEAK_ERR err)
@@ -52,8 +53,16 @@ void print_leak_err_info(enum LEAK_ERR err)
   }
 }
 
-void basic_test()
+int is_basic_err(struct task_mem_stats *tms)
 {
+  /** 此时表示一定存在有未释放的内存 */
+  if (!tms->active_allocs && tms->active_size)
+  {
+    print_leak_err_info(LEAK);
+    return -1;
+  }
+  /** 返回0 表示不存在基础性的问题 */
+  return 0;
 }
 
 /****************************************************************************

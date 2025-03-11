@@ -35,9 +35,11 @@ struct task_mem_stats
 
   char appname[32]; // 程序名
 
-  uint64_t timestamp; // 每次检测时间
+  uint64_t init_timestamp; // 每次检测时间
 
-  pid_t pid; // 任务 ID y
+  uint64_t check_timestamp; // 每次检测时间
+
+  pid_t pid; // 任务 ID
 
   uint32_t total_allocs; // 总分配次数
 
