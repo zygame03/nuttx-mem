@@ -41,13 +41,16 @@
  ****************************************************************************/
 
 #ifdef CONFIG_MM_MEMCHECKER_LEAKDETECTOR
-extern struct list_node task_mem_status_list;
+// extern struct list_node task_mem_status_list;
+// extern spinlock_t tms_list_lock;
+struct task_stats_list_lock *hf;
+
+struct task_stats_list_lock *lf;
 #endif
 
 /****************************************************************************
  * Private Types
  ****************************************************************************/
-extern spinlock_t tms_list_lock;
 
 static struct memchecker_metadata metadata_list[MEMCHECKER_PAGE_NUMBER];
 
@@ -289,8 +292,25 @@ static void memchecker_guarded_free(const char *file, int line, void *addr)
     return;
   }
 #ifdef CONFIG_MM_MEMCHECKER_LEAKDETECTOR
+  pid_t pid;
   int i;
-  i = update_task_mem_stats_when_free(metadata);
+  struct task_stats_list_lock *p = NULL;
+
+  pid = metadata->pid;
+  i = test_pid_in_tsll(pid);
+  switch (i)
+  {
+  case 0:
+    p = hf;
+    DEBUG("从高频链表释放\n");
+    break;
+  case 1:
+    p = lf;
+    DEBUG("从低频链表释放\n");
+    break;
+  }
+  if (i)
+    i = update_task_mem_stats_when_free(p, metadata);
   if (!i)
   {
     DEBUG("free ---> changed tms\n");
@@ -455,27 +475,19 @@ void memchecker_init(void)
   list_initialize(&error_list);
   memchecker_init_pool();
 #ifdef CONFIG_MM_MEMCHECKER_LEAKDETECTOR
-  /** 自旋锁初始化 */
-  spin_lock_init(&tms_list_lock);
-  /** 任务内存信息链表自旋锁 */
-  list_initialize(&task_mem_status_list);
-  /** 初始化内存泄漏检查 */
+
+  /** 获得内存泄漏检测模块中的 高频 低频链表 */
+  get_task_list_lock_hf(&hf);
+  get_task_list_lock_lf(&lf);
+
+  /*** 高频  */
+  spin_lock_init(&(hf->tms_list_lock));
+  list_initialize(&(hf->task_mem_status_list));
+
+  /**  低频 */
+  spin_lock_init(&(lf->tms_list_lock));
+  list_initialize(&(lf->task_mem_status_list));
   init_leak_detection();
+
 #endif
-}
-
-/**  计算 每一个未释放内存的大小 * 存活时间 */
-int get_active_size_multi_time(pid_t pid)
-{
-  // 判断pid是否有效
-  struct tcb_s *task = NULL;
-
-  task = nxsched_get_tcb(pid);
-  if (!task)
-  {
-    WARN("注意代码逻辑性,此时进程已经失效,问题很大\n");
-    return -1;
-  }
-
-  /** 这里应该要对应memchecker链表中的加锁 */
 }

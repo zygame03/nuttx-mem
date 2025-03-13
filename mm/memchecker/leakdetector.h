@@ -23,13 +23,18 @@
  *  process
  *  对应判断检测出问题的 --->
  ****************************************************************************/
+struct task_stats_list_lock
+{
+  struct list_node task_mem_status_list;
+  spinlock_t tms_list_lock;
+};
+
 struct task_mem_stats
 {
   uint8_t score; // 进程实时得分分值,通过权值计算得到  ---限制其大小
 
-  uint8_t warning_count; // 总共的报警次数
-
-  uint16_t weighted_value; // 权值总和--- 可能通过此次得分与上次的差异来加强检测
+  /** 记录最近三次的权值 最终取平均值 */
+  uint16_t weighted_value[3]; // 权值总和--- 可能通过此次得分与上次的差异来加强检测
 
   uint32_t count; // 对应进程检测次数
 
@@ -59,5 +64,11 @@ void init_leak_detection(void);
 
 int add_metadata_to_task_mem_stats(struct memchecker_metadata *metadata);
 
-int update_task_mem_stats_when_free(struct memchecker_metadata *metadata);
+int update_task_mem_stats_when_free(struct task_stats_list_lock *ttls, struct memchecker_metadata *metadata);
+
+int get_task_list_lock_hf(struct task_stats_list_lock **p);
+
+int get_task_list_lock_lf(struct task_stats_list_lock **p);
+
+int test_pid_in_tsll(pid_t pid);
 #endif
