@@ -28,6 +28,20 @@ config MM_MEMCHECKER_PAGE_NUMBER
 	---help---
 		Number of pages to be checked.
 
+config MM_MEMCHECKER_ALLOC_TIMER
+	bool "Allocation Timer"
+	default n
+	depends on MM_MEMCHECKER
+	---help---
+		Timer for allocating memory.
+
+config MM_MEMCHECKER_ALLOC_TIME
+	int "Allocation Timer"
+	default 100
+	depends on MM_MEMCHECKER_ALLOC_TIMER
+	---help---
+		Timer for allocating memory in milliseconds.
+
 config _MM_MEMCHECKER_LEAKDETECTOR
 	bool "Leak Detector"
 	default n
