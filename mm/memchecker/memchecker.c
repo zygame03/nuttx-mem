@@ -12,6 +12,7 @@
 #include <nuttx/allsyms.h>
 #include <nuttx/symtab.h>
 #include <nuttx/arch.h>
+#include <nuttx/atomic.h>
 #include "leakdetector.h"
 #include <sys/time.h>
 #include <nuttx/clock.h>
@@ -271,10 +272,20 @@ static void *memchecker_guarded_alloc(const char *file, int line, size_t size)
                    (void **)metadata->stack, 32, 0);
 #ifdef CONFIG_MM_MEMCHECKER_LEAKDETECTOR
   int i;
+  /*** 一开始默认都是添加到高频扫描链表中 */
   i = add_metadata_to_task_mem_stats(metadata);
   if (!i)
   {
-    DEBUG("add_metadata_to_task_mem_stats --- 成功添加\n");
+    INFO("add_metadata_to_task_mem_stats 添加成功\n");
+    if (atomic_read_acquire(&hf->workqueue_status))
+    {
+      syslog(LOG_INFO, "%s高频扫描链表已启动...正在添加元数据信息\n%s", COLOR_TABLE[COLOR_BLUE], COLOR_TABLE[COLOR_RESET]);
+    }
+    else
+    {
+      syslog(LOG_INFO, "%s正在启动高频扫描链表...\n%s", COLOR_TABLE[COLOR_BLUE], COLOR_TABLE[COLOR_RESET]);
+      init_high_fre_leak_detection();
+    }
   }
 #endif
 
@@ -487,7 +498,7 @@ void memchecker_init(void)
   /**  低频 */
   spin_lock_init(&(lf->tms_list_lock));
   list_initialize(&(lf->task_mem_status_list));
-  init_leak_detection();
+  // init_leak_detection();
 
 #endif
 }

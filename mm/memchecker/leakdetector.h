@@ -27,6 +27,7 @@ struct task_stats_list_lock
 {
   struct list_node task_mem_status_list;
   spinlock_t tms_list_lock;
+  atomic_t workqueue_status;
 };
 
 struct task_mem_stats
@@ -71,4 +72,8 @@ int get_task_list_lock_hf(struct task_stats_list_lock **p);
 int get_task_list_lock_lf(struct task_stats_list_lock **p);
 
 int test_pid_in_tsll(pid_t pid);
+
+void init_high_fre_leak_detection(void);
+
+void init_low_fre_leak_detection(void);
 #endif

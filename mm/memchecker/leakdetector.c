@@ -22,8 +22,8 @@
 #define LOG_STR_FMT "%-16s: %-30s\n"
 #define LOG_SIZE_FMT "%-16s: %-30lu\n"
 #define SEPARATOR "========================================"
-#define HIGH_FRE (4000)
-#define LOW_FRE (10000)
+#define HIGH_FRE (5000)
+#define LOW_FRE (20000)
 
 /****************************************************************************
  *  此处取消钩子函数, 为避免嵌套造成问题，此文件中的内存申请操作不计入统计
@@ -35,6 +35,12 @@
  *  g_leak_detection_work 泄漏检查工作任务
  *  task_mem_status_list  检查链表
  ****************************************************************************/
+/** 高频工作队列 */
+atomic_t high_fre_workqueue = 0;
+
+/** 低频工作队列 */
+atomic_t low_fre_workqueue = 0;
+
 extern struct memchecker_metadata metadata_list[];
 
 static struct work_s hf_g_leak_detection_work;
@@ -144,18 +150,22 @@ static void check_memory_leak(struct task_stats_list_lock *tsll)
   irqstate_t flags;
   uint64_t timestamp;
 
-  // if (is_task_list_empty(tsll))
-  // {
-  //   INFO("Cant check memory leak since the list is null\n");
-  //   return;
-  // }
+  if (!tsll)
+  {
+    syslog(LOG_WARNING, "%s@tsll can't be NULL, stop checking memory leak\n %s", COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
+    return;
+  }
+
   flags = spin_lock_irqsave(&tsll->tms_list_lock);
   DEBUG("in...\n");
   if (list_is_empty(&tsll->task_mem_status_list))
   {
-    INFO("Cant check memory leak since the list is null\n");
+    syslog(LOG_INFO, "%sCant check memory leak since the list is null%s \n", COLOR_TABLE[COLOR_BLUE], COLOR_TABLE[COLOR_RESET]);
     spin_unlock_irqrestore(&tsll->tms_list_lock, flags);
     DEBUG("out...\n");
+    /** 由于链表为空, 故终止该链表的工作队列 */
+    atomic_set_release(&tsll->workqueue_status, 0);
+    syslog(LOG_INFO, "%s already changed the existing status %s \n", COLOR_TABLE[COLOR_BLUE], COLOR_TABLE[COLOR_RESET]);
     return;
   }
   /** 计算此次检查时间戳 */
@@ -169,7 +179,7 @@ static void check_memory_leak(struct task_stats_list_lock *tsll)
     int i;
 
     wv_pos = tms->count - 1;
-    ucv = cal_unfreed_count(tms);
+    ucv = cal_W1(tms);
     if (-1 == ucv)
     {
       INFO("权值计算,存在问题\n");
@@ -177,7 +187,7 @@ static void check_memory_leak(struct task_stats_list_lock *tsll)
     tms->weighted_value[wv_pos % 3] = ucv;
     /** 把后续的再完成一下 */
     /** 超越3次次数限制 */
-    if (tms->count > 2)
+    if (tms->count >= 3)
     {
       /** 只有高频链表才进行这样的判断
        *  高频与低频的差别在于权值高低 对应的移位顺序操作不同
@@ -193,9 +203,15 @@ static void check_memory_leak(struct task_stats_list_lock *tsll)
           i = move_between_list(tms, tsll);
           if (-1 == i)
           {
-            WARN("移动链表内容失败...请尽快排查错误\n");
+            syslog(LOG_INFO, "%s移动链表内容失败...请尽快排查错误%s\n", COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
           }
-          WARN("链表移位成功...\n");
+          syslog(LOG_INFO, "%s内容移动到低频链表成功...%s\n", COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
+          /***在这时 需要查看低频链表是否处于启动状态 */
+          if (atomic_read_acquire(&lf.tms_list_lock))
+          {
+            syslog(LOG_INFO, "%s低频链表扫描尚未启动...%s\n", COLOR_TABLE[COLOR_BLUE], COLOR_TABLE[COLOR_RESET]);
+            init_low_fre_leak_detection();
+          }
         }
       }
     }
@@ -253,11 +269,25 @@ static void leak_detection_worker(void *tsll_arg)
 
   if (!tsll_arg)
   {
-    syslog(LOG_INFO, "%s tsll传参为空,为避免故障,工作队列强行终止...%s\n", COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
+    syslog(LOG_WARNING, "%stsll传参为空,为避免故障,工作队列强行终止...%s\n", COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
     return;
   }
   tsll = (struct task_stats_list_lock *)tsll_arg;
-  /** 如果tsll对应的链表为空的话就不执行检查操作, 每隔一段时间检测是否有任务需要处理 */
+
+  if (atomic_read_acquire(&tsll->workqueue_status) != 1)
+  {
+    if (tsll == &hf)
+    {
+      syslog(LOG_INFO, "%s高频链表为空, 暂停扫描...%s", COLOR_TABLE[COLOR_BLUE], COLOR_TABLE[COLOR_RESET]);
+      return;
+    }
+    else
+    {
+      syslog(LOG_INFO, "%s低频链表为空, 暂停扫描...%s", COLOR_TABLE[COLOR_BLUE], COLOR_TABLE[COLOR_RESET]);
+      return;
+    }
+  }
+
   flags = spin_lock_irqsave(&tsll->tms_list_lock);
   isEmpty = list_is_empty(&tsll->task_mem_status_list);
   spin_unlock_irqrestore(&tsll->tms_list_lock, flags);
@@ -269,27 +299,35 @@ static void leak_detection_worker(void *tsll_arg)
     /** 根据元数据信息检测内存泄漏 */
     check_memory_leak(tsll);
     /** 打印相关数据 */
-    print_task_mem_stats(tsll);
+    // print_task_mem_stats(tsll);
   }
   else
   {
-    if (tsll == &lf)
-      syslog(LOG_INFO, "当前低频信息链表为空, 等待信息采样进入链表\n");
+    if (tsll == &hf)
+    {
+      syslog(LOG_INFO, "当前高频扫描链表为空, 停止扫描\n");
+      atomic_set_release(&hf.workqueue_status, 0);
+      return;
+    }
     else
-      syslog(LOG_INFO, "当前高频信息链表为空, 等待信息采样进入链表\n");
+    {
+      syslog(LOG_INFO, "当前低频扫描链表为空, 停止扫描\n");
+      atomic_set_release(&lf.workqueue_status, 0);
+      return;
+    }
   }
   /** 对应判断工作队列所对应的路径 */
   if (tsll == &lf)
   {
     timeout = LOW_FRE;
     g_leak_detection_work = &lf_g_leak_detection_work;
-    syslog(LOG_INFO, "启动低频工作队列, 启动次数:%d...\n", ++high_work_queue);
+    syslog(LOG_INFO, "低频链表扫描次数:%d...\n", ++high_work_queue);
   }
   else if (tsll == &hf)
   {
     timeout = HIGH_FRE;
     g_leak_detection_work = &hf_g_leak_detection_work;
-    syslog(LOG_INFO, "启动高频工作队列, 启动次数:%d...\n", ++low_work_queue);
+    syslog(LOG_INFO, "高频链表扫描次数:%d...\n", ++low_work_queue);
   }
 
   work_queue(LPWORK,
@@ -299,13 +337,21 @@ static void leak_detection_worker(void *tsll_arg)
              MSEC2TICK(timeout));
 }
 
-void init_leak_detection(void)
+void init_high_fre_leak_detection(void)
 {
-  syslog(LOG_INFO, "%s内存泄漏工作队列已启动...%s\n", COLOR_TABLE[COLOR_BLUE], COLOR_TABLE[COLOR_RESET]);
+  /** 将状态初始化为1  0代表未启动 1代表已经启动 */
+  atomic_set_release(&hf.workqueue_status, 1);
+  syslog(LOG_INFO, "%s高频内存泄漏检测队列正在初始化...%s\n", COLOR_TABLE[COLOR_BLUE], COLOR_TABLE[COLOR_RESET]);
   leak_detection_worker(&hf);
-  leak_detection_worker(&lf);
 }
 
+void init_low_fre_leak_detection(void)
+{
+  /** 设置读取状态 */
+  atomic_set_release(&lf.workqueue_status, 1);
+  syslog(LOG_INFO, "%s低频内存泄漏检测队列正在初始化...%s\n", COLOR_TABLE[COLOR_BLUE], COLOR_TABLE[COLOR_RESET]);
+  leak_detection_worker(&lf);
+}
 /****************************************************************************
  *  add_metadata_to_task_mem_stats
  *  #define list_for_every_entry(list, entry, type, member)

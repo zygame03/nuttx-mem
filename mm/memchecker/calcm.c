@@ -8,7 +8,7 @@
 #include "utils.h"
 #include <nuttx/lib/math.h>
 
-#define MEMORY_ACTIVE_SIZE CONFIG_MM_MEMCHECKER_DATA_SIZE
+#define MEMORY_ACTIVE_SIZE (1024)
 #define MEMORY_TIME_BASE 500
 /** 内存的生存周期时间 20s  */
 #define ACTIVE_TIME_PERIOD 20
@@ -69,7 +69,7 @@ int is_basic_err(struct task_mem_stats *tms)
 }
 
 /****************************************************************************
- * Name: cal_unfreed_count
+ * Name: cal_W1
  *
  *  Description:
  *  计算方式:
@@ -84,11 +84,11 @@ int is_basic_err(struct task_mem_stats *tms)
  *   失败返回-1
  *  float powf(float b, float e);
  ****************************************************************************/
-int cal_unfreed_count(struct task_mem_stats *tms)
+int cal_W1(struct task_mem_stats *tms)
 {
   /** 分别对应未释放次数， 未释放内存块大小，以及最终的权值 */
   int unfreed_count, unfreed_size, ufc_val;
-  int extra_weight_val = 0;
+  float extra_weight_val = 0;
 
   if (!tms)
   {
@@ -98,30 +98,138 @@ int cal_unfreed_count(struct task_mem_stats *tms)
   /** 未释放次数 * (10  +  2^(内存块大小 / 基准块大小)) */
   unfreed_count = tms->active_allocs;
   unfreed_size = tms->active_size;
-  extra_weight_val = (int)powf((float)unfreed_size / MEMORY_ACTIVE_SIZE, 2.0);
-  ufc_val = unfreed_count * (10 + extra_weight_val);
+  extra_weight_val = powf((float)unfreed_size / MEMORY_ACTIVE_SIZE, 2.0);
+  ufc_val = (int)(unfreed_count * (10 + extra_weight_val));
 
-  INFO("-----------权值计算过程输出--------------\n");
-  INFO("extra_weight_val:  %d\n", extra_weight_val);
-  INFO("unfreed_count: %d\n", unfreed_count);
-  INFO("unfreed_size:  %d\n", unfreed_size);
-  INFO("计算公式: %d * (%d + 2^(%d / %d)) =%d", unfreed_count, WEIGHT_TABLE[WEIGHT_UNFREED_COUNT], unfreed_size, MEMORY_BLOCK_BASE, ufc_val);
-  INFO("--------------------------------------\n");
+  syslog(LOG_INFO,
+         "%s\n\
+          ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖ Calculating Process▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖\n"
+         "  |- 额外权重值:   %.2f\n"
+         "  |- 未释放计数:   %d\n"
+         "  |- 未释放大小:   %d\n"
+         "  |- 计算公式:     未释放次数 * (基本权值(默认:10) + 2^(额外权重))\n"
+         "  |- 计算过程:     %d * (%d + 2^(%d / %d))\n"
+         "  |- 计算结果:     %d\n"
+         "▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖\
+         %s",
+         COLOR_TABLE[COLOR_RED],
+         extra_weight_val,
+         unfreed_count,
+         unfreed_size,
+         unfreed_count,
+         WEIGHT_TABLE[WEIGHT_UNFREED_COUNT],
+         unfreed_size,
+         MEMORY_ACTIVE_SIZE,
+         ufc_val,
+         COLOR_TABLE[COLOR_RESET]);
   return ufc_val;
 }
 
 /****************************************************************************
- * Name: cal_unfreed_chunck_and_size
- *  ((Σ(活跃时间 * 活跃大小 ) ) / ( 标准内存警戒值 * 标准内存存活时间 * 未释放次数) ) * 30
+ * Name: cal_W2
+ *    计算方式:
+ *          内存块大小 与 权值关系:  内存大小因子
+ *                 0 ~ 1/10     ===> 1
+ *              1/10 ~ 1/5      ===> 2
+ *              ```````
+ *              9/10 ~ 1        ===> 9
+ *              超过了内存警戒值 ：
+ *              则  按照倍数(保留小数) * 10
+ *        存活时间系数 =  log2( 1 + (存活时间/基准时间))
+ *        ∑(内存块大小参数值 × 存活时间系数) 内存块
  * Description:
  * Input Parameters:
  *  tms:  struct task_mem_stats *tms
- * Returned Value:
- *  return  an integer,  indicates  succeeding to updatate task_mem_statas or failing to update
- *  return -1 , ---> fail
+ * Returned Value: 成功则返回计算好的权值
+ *    失败返回-1
  ****************************************************************************/
+static int get_active_mem_factor(int memory_size)
+{
+  float memory_arg = (float)memory_size;
+  int factor;
+  float times;
+
+  if (0 > memory_size)
+  {
+    syslog(LOG_WARNING, "%s memory_size为负数, 传参出现严重问题...%s\n", COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
+    return -1;
+  }
+  /**低于活跃内存警戒线 */
+  if (isgreater(MEMORY_ACTIVE_SIZE, memory_arg))
+  {
+    if (isgreater(memory_arg, 0.9 * MEMORY_ACTIVE_SIZE))
+    {
+      factor = 10;
+    }
+    else /** 此时低于0.9 */
+    {
+      if (isgreater(memory_arg, 0.8 * MEMORY_ACTIVE_SIZE))
+      {
+        factor = 9;
+      }
+      else
+      {
+        if (isgreater(memory_arg, 0.7 * MEMORY_ACTIVE_SIZE))
+        {
+          factor = 8;
+        }
+        else
+        {
+          if (isgreater(memory_arg, 0.6 * MEMORY_ACTIVE_SIZE))
+          {
+            factor = 7;
+          }
+          else
+          {
+            if (isgreater(memory_arg, 0.5 * MEMORY_ACTIVE_SIZE))
+            {
+              factor = 6;
+            }
+            else
+            {
+              if (isgreater(memory_arg, 0.4 * MEMORY_ACTIVE_SIZE))
+              {
+                factor = 5;
+              }
+              else
+              {
+                if (isgreater(memory_arg, 0.3 * MEMORY_ACTIVE_SIZE))
+                {
+                  factor = 4;
+                }
+                else
+                {
+                  if (isgreater(memory_arg, 0.2 * MEMORY_ACTIVE_SIZE))
+                  {
+                    factor = 3;
+                  }
+                  else
+                  {
+                    if (isgreater(memory_arg, 0.1 * MEMORY_ACTIVE_SIZE))
+                    {
+                      factor = 2;
+                    }
+                    else /** 预警内存的 1/10 都不到 */
+                    {
+                      factor = 1;
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  else
+  {
+    times = memory_arg / MEMORY_ACTIVE_SIZE;
+    factor = (int)(times * 10);
+  }
+  return factor;
+}
+
 int cal_unfreed_chunck_and_size(struct task_mem_stats *tms)
 {
-  /** 获取内存的存活时间 * 内存的大小量 /  */
-  /** 存活时间 * 大小 */
 }
