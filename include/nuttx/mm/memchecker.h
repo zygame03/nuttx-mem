@@ -40,9 +40,18 @@ enum memchecker_error_type
   ERROR_NONE,
   ERROR_OUT_OF_BOUDNDS,
   ERROR_USE_AFTER_FREE,
-  ERROR_DOUBLE_FREE,
   ERROR_INVALID_FREE,
   ERROR_MEMORY_LEAK,
+};
+
+struct memchecker_track {
+	pid_t pid;
+  char file[32];
+  int line;
+	int cpu;
+	uint32_t ts;
+	int num_stack_entries;
+	unsigned long stack_entries[MEMCHECKER_STACK_DEPTH];
 };
 
 struct memchecker_metadata
@@ -57,19 +66,9 @@ struct memchecker_metadata
 
   size_t size;
 
-  uint32_t alloc_ts;
+  struct memchecker_track alloc_track;
 
-  uint32_t free_ts;
-
-  pid_t pid;
-
-  char file[32];
-
-  int line;
-
-  int stack_depth;
-
-  unsigned long stack[MEMCHECKER_STACK_DEPTH];
+  struct memchecker_track free_track;
 };
 
 void memchecker_init(void);
