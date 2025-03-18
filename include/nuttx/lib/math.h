@@ -37,7 +37,7 @@
  */
 
 #ifdef CONFIG_ARCH_MATH_H
-#include <arch/math.h>
+#  include <arch/math.h>
 
 /* If CONFIG_LIBM is enabled, then the math library at lib/math will be
  * built.  This library was taken from the math library developed for the
@@ -71,55 +71,55 @@
 /* General Constants ********************************************************/
 
 #ifndef _HUGE_ENUF
-#define _HUGE_ENUF (1e+300) /* _HUGE_ENUF*_HUGE_ENUF must overflow */
+#  define _HUGE_ENUF (1e+300)  /* _HUGE_ENUF*_HUGE_ENUF must overflow */
 #endif
 
-#define INFINITY ((double)(_HUGE_ENUF * _HUGE_ENUF))
-#define NAN ((double)(INFINITY * 0.0F))
-#define HUGE_VAL INFINITY
+#define INFINITY   ((double)(_HUGE_ENUF * _HUGE_ENUF))
+#define NAN        ((double)(INFINITY * 0.0F))
+#define HUGE_VAL   INFINITY
 
 #define INFINITY_F ((float)INFINITY)
-#define NAN_F ((float)(INFINITY * 0.0F))
+#define NAN_F      ((float)(INFINITY * 0.0F))
 
 #define INFINITY_L ((long double)INFINITY)
-#define NAN_L ((long double)(INFINITY * 0.0F))
+#define NAN_L      ((long double)(INFINITY * 0.0F))
 
-#define isnan(x) ((x) != (x))
-#define isnanf(x) ((x) != (x))
-#define isnanl(x) ((x) != (x))
-#define isinf(x) (((x) == INFINITY) || ((x) == -INFINITY))
-#define isinff(x) (((x) == INFINITY_F) || ((x) == -INFINITY_F))
-#define isinfl(x) (((x) == INFINITY_L) || ((x) == -INFINITY_L))
+#define isnan(x)   ((x) != (x))
+#define isnanf(x)  ((x) != (x))
+#define isnanl(x)  ((x) != (x))
+#define isinf(x)   (((x) == INFINITY) || ((x) == -INFINITY))
+#define isinff(x)  (((x) == INFINITY_F) || ((x) == -INFINITY_F))
+#define isinfl(x)  (((x) == INFINITY_L) || ((x) == -INFINITY_L))
 
-#define finite(x) (!(isinf(x) || isnan(x)))
+#define finite(x)  (!(isinf(x) || isnan(x)))
 #define finitef(x) (!(isinff(x) || isnanf(x)))
 #define finitel(x) (!(isinfl(x) || isnanl(x)))
 
-#define isfinite(x)                                                                  \
-  (sizeof(x) == sizeof(float) ? finitef(x) : sizeof(x) == sizeof(double) ? finite(x) \
-                                                                         : finitel(x))
+#define isfinite(x) \
+  (sizeof(x) == sizeof(float) ? finitef(x) : \
+   sizeof(x) == sizeof(double) ? finite(x) : finitel(x))
 
 /* Exponential and Logarithmic constants ************************************/
 
-#define M_E 2.7182818284590452353602874713526625
-#define M_SQRT2 1.4142135623730950488016887242096981
-#define M_SQRT1_2 0.7071067811865475244008443621048490
-#define M_LOG2E 1.4426950408889634073599246810018921
-#define M_LOG10E 0.4342944819032518276511289189166051
-#define M_LN2 0.6931471805599453094172321214581765
-#define M_LN10 2.3025850929940456840179914546843642
+#define M_E        2.7182818284590452353602874713526625
+#define M_SQRT2    1.4142135623730950488016887242096981
+#define M_SQRT1_2  0.7071067811865475244008443621048490
+#define M_LOG2E    1.4426950408889634073599246810018921
+#define M_LOG10E   0.4342944819032518276511289189166051
+#define M_LN2      0.6931471805599453094172321214581765
+#define M_LN10     2.3025850929940456840179914546843642
 
 /* Trigonometric Constants **************************************************/
 
-#define M_PI 3.1415926535897932384626433832795029
-#define M_PI_2 1.5707963267948966192313216916397514
-#define M_PI_4 0.7853981633974483096156608458198757
-#define M_1_PI 0.3183098861837906715377675267450287
-#define M_2_PI 0.6366197723675813430755350534900574
+#define M_PI       3.1415926535897932384626433832795029
+#define M_PI_2     1.5707963267948966192313216916397514
+#define M_PI_4     0.7853981633974483096156608458198757
+#define M_1_PI     0.3183098861837906715377675267450287
+#define M_2_PI     0.6366197723675813430755350534900574
 #define M_2_SQRTPI 1.1283791670955125738961589031215452
 
-#define M_PI_F ((float)M_PI)
-#define M_PI_2_F ((float)M_PI_2)
+#define M_PI_F     ((float)M_PI)
+#define M_PI_2_F   ((float)M_PI_2)
 
 /****************************************************************************
  * Type Declarations
@@ -127,11 +127,11 @@
 
 /* Floating point types */
 
-typedef float float_t;
+typedef float        float_t;
 #ifndef CONFIG_HAVE_DOUBLE
-typedef float double_t;
+typedef float        double_t;
 #else
-typedef double double_t;
+typedef double       double_t;
 #endif
 
 /****************************************************************************
@@ -143,485 +143,485 @@ extern "C"
 {
 #endif
 
-  /* General Functions ********************************************************/
+/* General Functions ********************************************************/
 
-  float ceilf(float x);
+float       ceilf (float x);
 #ifdef CONFIG_HAVE_DOUBLE
-  double ceil(double x);
+double      ceil  (double x);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double ceill(long double x);
+long double ceill (long double x);
 #endif
 
-  float floorf(float x);
+float       floorf(float x);
 #ifdef CONFIG_HAVE_DOUBLE
-  double floor(double x);
+double      floor (double x);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double floorl(long double x);
+long double floorl(long double x);
 #endif
 
-  float roundf(float x);
+float       roundf(float x);
 #ifdef CONFIG_HAVE_DOUBLE
-  double round(double x);
+double      round (double x);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double roundl(long double x);
+long double roundl(long double x);
 #endif
 
-  long int lroundf(float x);
+long int    lroundf(float x);
 #ifdef CONFIG_HAVE_DOUBLE
-  long int lround(double x);
+long int    lround(double x);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long int lroundl(long double x);
+long int    lroundl(long double x);
 #endif
 
 #ifdef CONFIG_HAVE_LONG_LONG
-  long long int llroundf(float x);
+long long int llroundf(float x);
 #ifdef CONFIG_HAVE_DOUBLE
-  long long int llround(double x);
+long long int llround (double x);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long long int llroundl(long double x);
+long long int llroundl(long double x);
 #endif
 #endif
 
-  float rintf(float x); /* Not implemented */
+float       rintf(float x);      /* Not implemented */
 #ifdef CONFIG_HAVE_DOUBLE
-  double rint(double x);
+double      rint(double x);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double rintl(long double x); /* Not implemented */
+long double rintl(long double x); /* Not implemented */
 #endif
 
-  long int lrintf(float x);
+long int    lrintf(float x);
 #ifdef CONFIG_HAVE_DOUBLE
-  long int lrint(double x);
+long int    lrint(double x);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long int lrintl(long double x);
+long int    lrintl(long double x);
 #endif
 
 #ifdef CONFIG_HAVE_LONG_LONG
-  long long int llrintf(float x);
+long long int llrintf(float x);
 #ifdef CONFIG_HAVE_DOUBLE
-  long long int llrint(double x);
+long long int llrint(double x);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long long int llrintl(long double x);
+long long int llrintl(long double x);
 #endif
 #endif
 
-  float fabsf(float x);
+float       fabsf (float x);
 #ifdef CONFIG_HAVE_DOUBLE
-  double fabs(double x);
+double      fabs  (double x);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double fabsl(long double x);
+long double fabsl (long double x);
 #endif
 
-  float modff(float x, FAR float *iptr);
+float       modff (float x, FAR float *iptr);
 #ifdef CONFIG_HAVE_DOUBLE
-  double modf(double x, FAR double *iptr);
+double      modf  (double x, FAR double *iptr);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double modfl(long double x, FAR long double *iptr);
+long double modfl (long double x, FAR long double *iptr);
 #endif
 
-  float fmodf(float x, float div);
+float       fmodf (float x, float div);
 #ifdef CONFIG_HAVE_DOUBLE
-  double fmod(double x, double div);
+double      fmod  (double x, double div);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double fmodl(long double x, long double div);
+long double fmodl (long double x, long double div);
 #endif
 
-  /* Exponential and Logarithmic Functions ************************************/
+/* Exponential and Logarithmic Functions ************************************/
 
-  float powf(float b, float e);
+float       powf  (float b, float e);
 #ifdef CONFIG_HAVE_DOUBLE
-  double pow(double b, double e);
+double      pow   (double b, double e);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double powl(long double b, long double e);
+long double powl  (long double b, long double e);
 #endif
 
-  float expf(float x);
-  float exp2f(float x);
-  float expm1f(float x);
+float       expf  (float x);
+float       exp2f (float x);
+float       expm1f(float x);
 #ifdef CONFIG_HAVE_DOUBLE
-  double exp(double x);
-  double exp2(double x);
-  double expm1(double x);
+double      exp   (double x);
+double      exp2  (double x);
+double      expm1 (double x);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double expl(long double x);
-  long double exp2l(long double x);
-  long double expm1l(long double x);
+long double expl  (long double x);
+long double exp2l (long double x);
+long double expm1l(long double x);
 #endif
 
-  float fdimf(float x, float y);
+float       fdimf(float x, float y);
 #ifdef CONFIG_HAVE_DOUBLE
-  double fdim(double x, double y);
+double      fdim(double x, double y);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double fdiml(long double x, long double y);
+long double fdiml(long double x, long double y);
 #endif
 
-  float fmaf(float x, float y, float z);
+float       fmaf(float x, float y, float z);
 #ifdef CONFIG_HAVE_DOUBLE
-  double fma(double x, double y, double z);
+double      fma(double x, double y, double z);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double fmal(long double x, long double y, long double z);
+long double fmal(long double x, long double y, long double z);
 #endif
 
-  float fmaxf(float x, float y);
+float       fmaxf(float x, float y);
 #ifdef CONFIG_HAVE_DOUBLE
-  double fmax(double x, double y);
+double      fmax(double x, double y);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double fmaxl(long double x, long double y);
+long double fmaxl(long double x, long double y);
 #endif
 
-  float fminf(float x, float y);
+float       fminf(float x, float y);
 #ifdef CONFIG_HAVE_DOUBLE
-  double fmin(double x, double y);
+double      fmin(double x, double y);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double fminl(long double x, long double y);
+long double fminl(long double x, long double y);
 #endif
 
-  float hypotf(float x, float y);
+float       hypotf(float x, float y);
 #ifdef CONFIG_HAVE_DOUBLE
-  double hypot(double x, double y);
+double      hypot(double x, double y);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double hypotl(long double x, long double y);
+long double hypotl(long double x, long double y);
 #endif
 
-  float lgammaf(float x);
+float       lgammaf(float x);
 #ifdef CONFIG_HAVE_DOUBLE
-  double __cos(double x, double y);
-  double __sin(double x, double y, int iy);
-  double gamma(double x);
-  double lgamma(double x);
+double      __cos(double x, double y);
+double      __sin(double x, double y, int iy);
+double      gamma(double x);
+double      lgamma(double x);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double lgammal(long double x);
+long double lgammal(long double x);
 #endif
 
-  float tgammaf(float x);
+float       tgammaf(float x);
 #ifdef CONFIG_HAVE_DOUBLE
-  double tgamma(double x);
+double      tgamma(double x);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double tgammal(long double x);
+long double tgammal(long double x);
 #endif
 
-  float logf(float x);
+float       logf  (float x);
 #ifdef CONFIG_HAVE_DOUBLE
-  double log(double x);
+double      log   (double x);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double logl(long double x);
+long double logl  (long double x);
 #endif
 
-  float log10f(float x);
+float       log10f(float x);
 #ifdef CONFIG_HAVE_DOUBLE
-  double log10(double x);
+double      log10 (double x);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double log10l(long double x);
+long double log10l(long double x);
 #endif
 
-  float log1pf(float x);
+float       log1pf(float x);
 #ifdef CONFIG_HAVE_DOUBLE
-  double log1p(double x);
+double      log1p (double x);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double log1pl(long double x);
+long double log1pl(long double x);
 #endif
 
-  float log2f(float x);
+float       log2f (float x);
 #ifdef CONFIG_HAVE_DOUBLE
-  double log2(double x);
+double      log2  (double x);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double log2l(long double x);
+long double log2l (long double x);
 #endif
 
-  float logbf(float x);
+float       logbf (float x);
 #ifdef CONFIG_HAVE_DOUBLE
-  double logb(double x);
+double      logb  (double x);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double logbl(long double x);
+long double logbl (long double x);
 #endif
 
-  int ilogbf(float x);
+int         ilogbf (float x);
 #ifdef CONFIG_HAVE_DOUBLE
-  int ilogb(double x);
+int         ilogb  (double x);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  int ilogbl(long double x);
+int         ilogbl (long double x);
 #endif
 
-  float sqrtf(float x);
+float       sqrtf (float x);
 #ifdef CONFIG_HAVE_DOUBLE
-  double sqrt(double x);
+double      sqrt  (double x);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double sqrtl(long double x);
+long double sqrtl (long double x);
 #endif
 
-  float ldexpf(float x, int n);
+float       ldexpf(float x, int n);
 #ifdef CONFIG_HAVE_DOUBLE
-  double ldexp(double x, int n);
+double      ldexp (double x, int n);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double ldexpl(long double x, int n);
+long double ldexpl(long double x, int n);
 #endif
 
-  float frexpf(float x, FAR int *exp);
+float       frexpf(float x, FAR int *exp);
 #ifdef CONFIG_HAVE_DOUBLE
-  double frexp(double x, FAR int *exp);
+double      frexp (double x, FAR int *exp);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double frexpl(long double x, FAR int *exp);
+long double frexpl(long double x, FAR int *exp);
 #endif
 
-  /* Trigonometric Functions **************************************************/
+/* Trigonometric Functions **************************************************/
 
-  void sincosf(float, FAR float *, FAR float *);
+void        sincosf(float, FAR float *, FAR float *);
 #ifdef CONFIG_HAVE_DOUBLE
-  void sincos(double, FAR double *, FAR double *);
+void        sincos(double, FAR double *, FAR double *);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  void sincosl(long double, FAR long double *, FAR long double *);
+void        sincosl(long double, FAR long double *, FAR long double *);
 #endif
 
-  float sinf(float x);
+float       sinf  (float x);
 #ifdef CONFIG_HAVE_DOUBLE
-  double sin(double x);
+double      sin   (double x);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double sinl(long double x);
+long double sinl  (long double x);
 #endif
 
-  float cosf(float x);
+float       cosf  (float x);
 #ifdef CONFIG_HAVE_DOUBLE
-  double cos(double x);
+double      cos   (double x);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double cosl(long double x);
+long double cosl  (long double x);
 #endif
 
-  float tanf(float x);
+float       tanf  (float x);
 #ifdef CONFIG_HAVE_DOUBLE
-  double tan(double x);
+double      tan   (double x);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double tanl(long double x);
+long double tanl  (long double x);
 #endif
 
-  float asinf(float x);
+float       asinf (float x);
 #ifdef CONFIG_HAVE_DOUBLE
-  double asin(double x);
+double      asin  (double x);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double asinl(long double x);
+long double asinl (long double x);
 #endif
 
-  float acosf(float x);
+float       acosf (float x);
 #ifdef CONFIG_HAVE_DOUBLE
-  double acos(double x);
+double      acos  (double x);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double acosl(long double x);
+long double acosl (long double x);
 #endif
 
-  float atanf(float x);
+float       atanf (float x);
 #ifdef CONFIG_HAVE_DOUBLE
-  double atan(double x);
+double      atan  (double x);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double atanl(long double x);
+long double atanl (long double x);
 #endif
 
-  float atan2f(float y, float x);
+float       atan2f(float y, float x);
 #ifdef CONFIG_HAVE_DOUBLE
-  double atan2(double y, double x);
+double      atan2 (double y, double x);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double atan2l(long double y, long double x);
+long double atan2l(long double y, long double x);
 #endif
 
-  float sinhf(float x);
+float       sinhf (float x);
 #ifdef CONFIG_HAVE_DOUBLE
-  double sinh(double x);
+double      sinh  (double x);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double sinhl(long double x);
+long double sinhl (long double x);
 #endif
 
-  float coshf(float x);
+float       coshf (float x);
 #ifdef CONFIG_HAVE_DOUBLE
-  double cosh(double x);
+double      cosh  (double x);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double coshl(long double x);
+long double coshl (long double x);
 #endif
 
-  float cbrtf(float x);
+float       cbrtf (float x);
 #ifdef CONFIG_HAVE_DOUBLE
-  double cbrt(double x);
+double      cbrt  (double x);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double cbrtl(long double x);
+long double cbrtl (long double x);
 #endif
 
-  float tanhf(float x);
+float       tanhf (float x);
 #ifdef CONFIG_HAVE_DOUBLE
-  double tanh(double x);
+double      tanh  (double x);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double tanhl(long double x);
+long double tanhl (long double x);
 #endif
 
-  float asinhf(float x);
+float       asinhf (float x);
 #ifdef CONFIG_HAVE_DOUBLE
-  double asinh(double x);
+double      asinh  (double x);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double asinhl(long double x);
+long double asinhl (long double x);
 #endif
 
-  float acoshf(float x);
+float       acoshf (float x);
 #ifdef CONFIG_HAVE_DOUBLE
-  double acosh(double x);
+double      acosh  (double x);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double acoshl(long double x);
+long double acoshl (long double x);
 #endif
 
-  float atanhf(float x);
+float       atanhf (float x);
 #ifdef CONFIG_HAVE_DOUBLE
-  double atanh(double x);
+double      atanh  (double x);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double atanhl(long double x);
+long double atanhl (long double x);
 #endif
 
-  float erff(float x);
-  float erfcf(float x);
+float       erff (float x);
+float       erfcf(float x);
 #ifdef CONFIG_HAVE_DOUBLE
-  double erf(double x);
-  double erfc(double x);
+double      erf  (double x);
+double      erfc(double x);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double erfl(long double x);
-  long double erfcl(long double x);
+long double erfl (long double x);
+long double erfcl(long double x);
 #endif
 
-  float copysignf(float x, float y);
+float       copysignf (float x, float y);
 #ifdef CONFIG_HAVE_DOUBLE
-  double copysign(double x, double y);
+double      copysign  (double x, double y);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double copysignl(long double x, long double y);
+long double copysignl (long double x, long double y);
 #endif
 
-  float truncf(float x);
+float       truncf (float x);
 #ifdef CONFIG_HAVE_DOUBLE
-  double trunc(double x);
+double      trunc (double x);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double truncl(long double x);
+long double truncl (long double x);
 #endif
 
-  float nanf(FAR const char *tagp);
+float       nanf(FAR const char *tagp);
 #ifdef CONFIG_HAVE_DOUBLE
-  double nan(FAR const char *tagp);
+double      nan(FAR const char *tagp);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double nanl(FAR const char *tagp);
+long double nanl(FAR const char *tagp);
 #endif
 
-  float nearbyintf(float x);
+float       nearbyintf(float x);
 #ifdef CONFIG_HAVE_DOUBLE
-  double nearbyint(double x);
+double      nearbyint(double x);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double nearbyintl(long double x);
+long double nearbyintl(long double x);
 #endif
 
-  float nextafterf(float x, float y);
+float       nextafterf(float x, float y);
 #ifdef CONFIG_HAVE_DOUBLE
-  double nextafter(double x, double y);
+double      nextafter(double x, double y);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double nextafterl(long double x, long double y);
+long double nextafterl(long double x, long double y);
 #endif
 
-  float nexttowardf(float x, long double y);
+float       nexttowardf(float x, long double y);
 #ifdef CONFIG_HAVE_DOUBLE
-  double nexttoward(double x, long double y);
+double      nexttoward(double x, long double y);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double nexttowardl(long double x, long double y);
+long double nexttowardl(long double x, long double y);
 #endif
 
-  float remainderf(float x, float y);
+float       remainderf(float x, float y);
 #ifdef CONFIG_HAVE_DOUBLE
-  double remainder(double x, double y);
+double      remainder(double x, double y);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double remainderl(long double x, long double y);
+long double remainderl(long double x, long double y);
 #endif
 
-  float remquof(float x, float y, int *quo);
+float       remquof(float x, float y, int *quo);
 #ifdef CONFIG_HAVE_DOUBLE
-  double remquo(double x, double y, int *quo);
+double      remquo(double x, double y, int *quo);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double remquol(long double x, long double y, int *quo);
+long double remquol(long double x, long double y, int *quo);
 #endif
 
-  float scalblnf(float x, long int n);
+float       scalblnf(float x, long int n);
 #ifdef CONFIG_HAVE_DOUBLE
-  double scalbln(double x, long int n);
+double      scalbln(double x, long int n);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double scalblnl(long double x, long int n);
+long double scalblnl(long double x, long int n);
 #endif
 
-  float scalbnf(float x, int n);
+float       scalbnf(float x, int n);
 #ifdef CONFIG_HAVE_DOUBLE
-  double scalbn(double x, int n);
+double      scalbn(double x, int n);
 #endif
 #ifdef CONFIG_HAVE_LONG_DOUBLE
-  long double scalbnl(long double x, int n);
+long double scalbnl(long double x, int n);
 #endif
 
-#define FP_INFINITE 0
-#define FP_NAN 1
-#define FP_NORMAL 2
-#define FP_SUBNORMAL 3
-#define FP_ZERO 4
-#define fpclassify(x)                                                \
-  __builtin_fpclassify(FP_NAN, FP_INFINITE, FP_NORMAL, FP_SUBNORMAL, \
-                       FP_ZERO, x)
+#define FP_INFINITE     0
+#define FP_NAN          1
+#define FP_NORMAL       2
+#define FP_SUBNORMAL    3
+#define FP_ZERO         4
+#define fpclassify(x) \
+    __builtin_fpclassify(FP_NAN, FP_INFINITE, FP_NORMAL, FP_SUBNORMAL, \
+                         FP_ZERO, x)
 
-#define isunordered(x, y) __builtin_isunordered(x, y)
-#define isgreater(x, y) __builtin_isgreater(x, y)
+#define isunordered(x, y)    __builtin_isunordered(x, y)
+#define isgreater(x, y)      __builtin_isgreater(x, y)
 #define isgreaterequal(x, y) __builtin_isgreaterequal(x, y)
-#define isless(x, y) __builtin_isless(x, y)
-#define islessequal(x, y) __builtin_islessequal(x, y)
-#define islessgreater(x, y) __builtin_islessgreater(x, y)
-#define isnormal(x) __builtin_isnormal(x)
-#define signbit(x) __builtin_signbit(x)
+#define isless(x, y)         __builtin_isless(x, y)
+#define islessequal(x, y)    __builtin_islessequal(x, y)
+#define islessgreater(x, y)  __builtin_islessgreater(x, y)
+#define isnormal(x)          __builtin_isnormal(x)
+#define signbit(x)           __builtin_signbit(x)
 
 #if defined(__cplusplus)
 }
