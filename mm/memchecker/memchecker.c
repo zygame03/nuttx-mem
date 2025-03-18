@@ -132,7 +132,7 @@ static void memchecker_print_stack(struct memchecker_metadata *metadata)
   struct symtab_s *symbol;
   size_t size;
 
-  struct tcb_s *tcb = nxsched_get_tcb(metadata->alloc_track.pid);
+  struct tcb_s *tcb = nxsched_get_tcb(metadata->pid);
 
 #ifdef CONFIG_SMP
   uint8_t cpu = tcb->cpu;
@@ -142,7 +142,7 @@ static void memchecker_print_stack(struct memchecker_metadata *metadata)
   
   syslog(LOG_ERR, "alloc_track: task: %s", tcb->name);
   syslog(LOG_ERR, "pid: %d cpu: %d file: %s line: %d",
-          metadata->alloc_track.pid, cpu, metadata->alloc_track.file,
+          metadata->pid, cpu, metadata->alloc_track.file,
           metadata->alloc_track.line);
 
   for(int i = 0; i < metadata->alloc_track.num_stack_entries; i++)
@@ -337,11 +337,11 @@ static void *memchecker_guarded_alloc(const char *file, int line, size_t size)
 
   /* 记录分配信息 */ 
   metadata->alloc_track.ts = clock_systime_ticks();
-  metadata->alloc_track.pid = getpid();
+  metadata->pid = getpid();
   strcpy(metadata->alloc_track.file, file);
   metadata->alloc_track.line = line;
   metadata->alloc_track.num_stack_entries = 
-  up_backtrace(nxsched_get_tcb(metadata->alloc_track.pid), 
+  up_backtrace(nxsched_get_tcb(metadata->pid), 
                (void **)metadata->alloc_track.stack_entries, 32, 0);
 
   spin_unlock(&metadata->lock);
