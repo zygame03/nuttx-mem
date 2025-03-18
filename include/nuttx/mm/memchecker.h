@@ -44,14 +44,15 @@ enum memchecker_error_type
   ERROR_MEMORY_LEAK,
 };
 
-struct memchecker_track {
-	pid_t pid;
+struct memchecker_track
+{
+  pid_t pid;
   char file[32];
   int line;
-	int cpu;
-	uint32_t ts;
-	int num_stack_entries;
-	unsigned long stack_entries[MEMCHECKER_STACK_DEPTH];
+  int cpu;
+  uint32_t ts;
+  int num_stack_entries;
+  unsigned long stack_entries[MEMCHECKER_STACK_DEPTH];
 };
 
 struct memchecker_metadata

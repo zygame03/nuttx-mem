@@ -41,16 +41,16 @@ void print_leak_err_info(enum LEAK_ERR err)
   switch (err)
   {
   case UNFREEED_NUM:
-    syslog(LOG_INFO, "%s未释放的内存数量超出安全值!%s\n", COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
+    syslog(LOG_INFO, "%s Excessive amount of unreleased memory!!!%s\n", COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
     break;
   case UNFREEED_CHUNK:
-    syslog(LOG_INFO, "%s存在大量未释放的内存!%s\n", COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
+    syslog(LOG_INFO, "%s Too much unfreed memory!!!%s\n", COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
     break;
   case HIGH_GROWTH_RATE:
-    syslog(LOG_INFO, "%s内存申请增速过快!%s\n", COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
+    syslog(LOG_INFO, "%s内存申请增速过快!!!%s\n", COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
     break;
   case LEAK:
-    syslog(LOG_INFO, "%s内存存在泄露的情况!%s\n", COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
+    syslog(LOG_INFO, "%smemory leaks!!!%s\n", COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
     break;
   }
 }
@@ -232,4 +232,5 @@ static int get_active_mem_factor(int memory_size)
 
 int cal_unfreed_chunck_and_size(struct task_mem_stats *tms)
 {
+  /** 通过tms  进入循环遍历 每个结构体 */
 }

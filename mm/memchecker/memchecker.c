@@ -348,20 +348,9 @@ static void *memchecker_guarded_alloc(const char *file, int line, size_t size)
 #ifdef CONFIG_MM_MEMCHECKER_LEAKDETECTOR
   int i;
   /*** 一开始默认都是添加到高频扫描链表中 */
+  /*** 如果不为空, 则默认   */
   i = add_metadata_to_task_mem_stats(metadata);
-  if (!i)
-  {
-    INFO("add_metadata_to_task_mem_stats 添加成功\n");
-    if (atomic_read_acquire(&hf->workqueue_status))
-    {
-      syslog(LOG_INFO, "%s高频扫描链表已启动...正在添加元数据信息\n%s", COLOR_TABLE[COLOR_BLUE], COLOR_TABLE[COLOR_RESET]);
-    }
-    else
-    {
-      syslog(LOG_INFO, "%s正在启动高频扫描链表...\n%s", COLOR_TABLE[COLOR_BLUE], COLOR_TABLE[COLOR_RESET]);
-      init_high_fre_leak_detection();
-    }
-  }
+
 #endif
   return (void *)addr;
 }
@@ -383,7 +372,7 @@ static void memchecker_guarded_free(const char *file, int line, void *addr)
   int i;
   struct task_stats_list_lock *p = NULL;
 
-  pid = metadata->pid;
+  pid = memchecker_metadata->pid;
   i = test_pid_in_tsll(pid);
   switch (i)
   {
@@ -611,7 +600,7 @@ void memchecker_init(void)
 
 #ifdef CONFIG_MM_MEMCHECKER_LEAKDETECTOR
 
-  /** 获得内存泄漏检测模块中的 高频 低频链表 */
+  /**  通过函数导出对应的链表值 */
   get_task_list_lock_hf(&hf);
   get_task_list_lock_lf(&lf);
 
@@ -622,7 +611,6 @@ void memchecker_init(void)
   /**  低频 */
   spin_lock_init(&(lf->tms_list_lock));
   list_initialize(&(lf->task_mem_status_list));
-  // init_leak_detection();
 
 #endif
 }
