@@ -42,7 +42,7 @@ config MM_MEMCHECKER_ALLOC_TIME
 	---help---
 		Timer for allocating memory in milliseconds.
 
-config _MM_MEMCHECKER_LEAKDETECTOR
+config MM_MEMCHECKER_LEAKDETECTOR
 	bool "Leak Detector"
 	default n
 	depends on MM_MEMCHECKER
