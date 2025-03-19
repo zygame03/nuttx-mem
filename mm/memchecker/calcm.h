@@ -33,10 +33,10 @@
 
 struct task_mem_stats;
 
-int cal_unfreed_count(struct task_mem_stats *tms);
+float cal_w1(struct task_mem_stats *tms);
 
 /** (活跃时间 * 活跃大小 + .... +  )  /  64 * 5s * 未释放次数   */
-int cal_unfreed_chunck(struct task_mem_stats *tms);
+float cal_w2(struct task_mem_stats *tms);
 
 /** 逻辑判断 内存活跃数量为0 但是却存在内存量 此时必然发生泄漏  */
 

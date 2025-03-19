@@ -61,7 +61,8 @@ int is_basic_err(struct task_mem_stats *tms)
   if (!tms->active_allocs && tms->active_size)
   {
     print_leak_err_info(LEAK);
-    WARN("此时存在严重的安全问题\n");
+    syslog(LOG_WARNING, " %s There is memory leak...%s\n",
+           COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
     return -1;
   }
   /** 返回0 表示不存在基础性的问题 */
@@ -69,13 +70,14 @@ int is_basic_err(struct task_mem_stats *tms)
 }
 
 /****************************************************************************
- * Name: cal_W1
- *
- *  Description:
- *  计算方式:
- *    额外权值:活跃内存 / 活跃的基准警戒大小
- *    未释放次数 * (10  + 2^ (额外权值) )
- *
+ * Name: cal_w1()
+ * Description:
+ *   计算方式:
+ *    额外权值: 活跃内存 / 活跃的基准警戒大小
+ *    未释放次数 * (10  + e^ (额外权值) )
+ *    由于可能由于活跃内存的剧烈增长所造成的'指数级爆炸增长'
+ *    我们将此得分的最高分值限制在60分以内
+ *  待暴漏的值:  活跃
  * Input Parameters:
  *   tms -  struct task_mem_stats *tms
  *
@@ -84,56 +86,56 @@ int is_basic_err(struct task_mem_stats *tms)
  *   失败返回-1
  *  float powf(float b, float e);
  ****************************************************************************/
-int cal_W1(struct task_mem_stats *tms)
+float cal_w1(struct task_mem_stats *tms)
 {
   /** 分别对应未释放次数， 未释放内存块大小，以及最终的权值 */
-  int unfreed_count, unfreed_size, ufc_val;
-  float extra_weight_val = 0;
+  int active_allocs, active_size;
+  float extra_weight_val = 0, w1_val;
 
   if (!tms)
   {
-    WARN("传入的tms为空!!!\n");
+    syslog(LOG_WARNING, "%s @tms is NULL...%s\n",
+           COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
     return -1;
   }
-  /** 未释放次数 * (10  +  2^(内存块大小 / 基准块大小)) */
-  unfreed_count = tms->active_allocs;
-  unfreed_size = tms->active_size;
-  extra_weight_val = powf((float)unfreed_size / MEMORY_ACTIVE_SIZE, 2.0);
-  ufc_val = (int)(unfreed_count * (10 + extra_weight_val));
+  /** 未释放次数 * (10  +  e^(内存块大小 / 基准块大小)) */
+  active_allocs = tms->active_allocs;
+  active_size = tms->active_size;
+  extra_weight_val = powf((float)active_size / MEMORY_ACTIVE_SIZE, M_E);
+  w1_val = (active_allocs * (10 + extra_weight_val));
 
   syslog(LOG_INFO,
-         "%s\n\
-          ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖ Calculating Process▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖\n"
-         "  |- 额外权重值:   %.2f\n"
-         "  |- 未释放计数:   %d\n"
-         "  |- 未释放大小:   %d\n"
-         "  |- 计算公式:     未释放次数 * (基本权值(默认:10) + 2^(额外权重))\n"
-         "  |- 计算过程:     %d * (%d + 2^(%d / %d))\n"
-         "  |- 计算结果:     %d\n"
-         "▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖\
+         "%s\n▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖ Calculating Process▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖\n"
+         "  |- e^(active_size / standard_memory_size ):   %.2f\n"
+         "  |- active_allocs:   %d\n"
+         "  |- active_size:     %d(B)\n"
+         "  |- formula:         active_allocs * (10 + e^(extra_val))\n"
+         "  |- process:         %d * (%d + 2^(%d / %d))\n"
+         "  |- result:          %.2f\n"
+         "▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖\
          %s",
-         COLOR_TABLE[COLOR_RED],
+         COLOR_TABLE[COLOR_BLUE],
          extra_weight_val,
-         unfreed_count,
-         unfreed_size,
-         unfreed_count,
+         active_allocs,
+         active_size,
+         active_allocs,
          WEIGHT_TABLE[WEIGHT_UNFREED_COUNT],
-         unfreed_size,
+         active_size,
          MEMORY_ACTIVE_SIZE,
-         ufc_val,
+         w1_val,
          COLOR_TABLE[COLOR_RESET]);
-  return ufc_val;
+  return w1_val;
 }
 
 /****************************************************************************
- * Name: cal_W2
+ * Name: cal_w2()
  *    计算方式:
  *          内存块大小 与 权值关系:  内存大小因子
  *                 0 ~ 1/10     ===> 1
  *              1/10 ~ 1/5      ===> 2
  *              ```````
  *              9/10 ~ 1        ===> 9
- *              超过了内存警戒值 ：
+ *              超过了内存警戒值:
  *              则  按照倍数(保留小数) * 10
  *        存活时间系数 =  log2( 1 + (存活时间/基准时间))
  *        ∑(内存块大小参数值 × 存活时间系数) 内存块
@@ -230,7 +232,37 @@ static int get_active_mem_factor(int memory_size)
   return factor;
 }
 
-int cal_unfreed_chunck_and_size(struct task_mem_stats *tms)
+float cal_w2(struct task_mem_stats *tms)
 {
   /** 通过tms  进入循环遍历 每个结构体 */
+  struct memchecker_metadata *buffer[CONFIG_MM_MEMCHECKER_PAGE_NUMBER] = {0};
+  int count, i, factor, w2_value;
+  uint32_t ts, cur_ts;
+  int active_time;
+  float active_time_ratio, sum_value = 0.0;
+
+  count = pid_to_metadata(tms->pid, &buffer);
+  if (0 >= count)
+  {
+    syslog(LOG_WARNING, "%sTask doesn't exit or some other problems...%s\n",
+           COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
+    return -1;
+  }
+
+  for (i = 0; i < count; i++)
+  {
+    factor = get_active_mem_factor(buffer[i]->size);
+    cur_ts = clock_systime_ticks();
+    /** 这里的500对应频率  */
+    active_time = (cur_ts - buffer[i]->alloc_track.ts) / MEMORY_TIME_BASE;
+    active_time_ratio = log2f(1 + active_time);
+    if (0 > factor)
+    {
+      syslog(LOG_WARNING, "%sfactor can't be a negative number...%s\n",
+             COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
+      return;
+    }
+    sum_value += factor * active_time_ratio;
+  }
+  return (int)sum_value;
 }
