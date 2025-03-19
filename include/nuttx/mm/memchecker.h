@@ -70,6 +70,10 @@ struct memchecker_metadata
 
   pid_t pid;
 
+  uint32_t last_hash;
+
+  int8_t activity_score;
+
   struct memchecker_track alloc_track;
 
   struct memchecker_track free_track;
