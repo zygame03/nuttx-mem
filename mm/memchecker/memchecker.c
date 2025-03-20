@@ -18,6 +18,7 @@
 #include <sys/time.h>
 #include <time.h>
 #include <nuttx/atomic.h>
+#include <nuttx/syslog/syslog.h>
 #include "mmdebug.h"
 
 /****************************************************************************
@@ -695,6 +696,7 @@ int pid_to_metadata(pid_t pid, struct memchecker_metadata **buffer)
 
 void memchecker_init(void)
 {
+  syslog_file_channel("/log/memchecker");
   list_initialize(&usable_list);
   list_initialize(&allocated_list);
   list_initialize(&freed_list);
