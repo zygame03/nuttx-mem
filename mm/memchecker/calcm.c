@@ -15,7 +15,7 @@
 
 enum WEIGHT
 {
-  WEIGHT_UNFREED_COUNT,
+  WEIGHT_ACTIVE_ALLOCS,
   WEIGHT_CHUNCK_AND_SIZE,
   WEIGHT_AGE,
   WEIGHT_NUM
@@ -23,7 +23,7 @@ enum WEIGHT
 
 /**  指定权值 */
 static int WEIGHT_TABLE[WEIGHT_NUM] = {
-    [WEIGHT_UNFREED_COUNT] = 8,
+    [WEIGHT_ACTIVE_ALLOCS] = 8,
     [WEIGHT_CHUNCK_AND_SIZE] = 30,
     [WEIGHT_AGE] = 10};
 
@@ -90,7 +90,7 @@ float cal_w1(struct task_mem_stats *tms)
 {
   /** 分别对应未释放次数， 未释放内存块大小，以及最终的权值 */
   int active_allocs, active_size;
-  float extra_weight_val = 0, w1_val;
+  float extra_weight_val = 0.0, w1_val;
 
   if (!tms)
   {
@@ -109,7 +109,7 @@ float cal_w1(struct task_mem_stats *tms)
          "  |- e^(active_size / standard_memory_size ):   %.2f\n"
          "  |- active_allocs:   %d\n"
          "  |- active_size:     %d(B)\n"
-         "  |- formula:         active_allocs * (10 + e^(extra_val))\n"
+         "  |- formula:         active_allocs * (%d + %.3f^(extra_val))\n"
          "  |- process:         %d * (%d + 2^(%d / %d))\n"
          "  |- result:          %.2f\n"
          "▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖\
@@ -118,8 +118,10 @@ float cal_w1(struct task_mem_stats *tms)
          extra_weight_val,
          active_allocs,
          active_size,
+         WEIGHT_TABLE[WEIGHT_ACTIVE_ALLOCS],
+         M_E,
          active_allocs,
-         WEIGHT_TABLE[WEIGHT_UNFREED_COUNT],
+         WEIGHT_TABLE[WEIGHT_ACTIVE_ALLOCS],
          active_size,
          MEMORY_ACTIVE_SIZE,
          w1_val,
@@ -256,6 +258,7 @@ float cal_w2(struct task_mem_stats *tms)
     /** 这里的500对应频率  */
     active_time = (cur_ts - buffer[i]->alloc_track.ts) / MEMORY_TIME_BASE;
     active_time_ratio = log2f(1 + active_time);
+
     if (0 > factor)
     {
       syslog(LOG_WARNING, "%sfactor can't be a negative number...%s\n",
@@ -265,4 +268,165 @@ float cal_w2(struct task_mem_stats *tms)
     sum_value += factor * active_time_ratio;
   }
   return (int)sum_value;
+}
+
+/****************************************************************************
+ * write by zy
+ ****************************************************************************/
+
+struct task_mem_info
+{
+  struct list_node node;
+  pid_t pid;
+  uint32_t total_size;
+  uint32_t unfreed_num;
+  clock_t active_time_avg;
+  clock_t active_time_max;
+  clock_t active_time_min;
+};
+
+static struct list_node task_list;
+
+static double size_base_score = 1;   // 内存大小基准分数倍率
+static double count_base_score = 10; // 未释放数量基准分数倍率
+static double time_base_score = 1;   // 存活时间基准分数倍率
+
+static double size_weight = 0.4;  // 大小权重系数
+static double count_weight = 0.4; // 未释放数量权重系数
+static double time_weight = 0.2;  // 存活时间权重系数
+
+// 通过pid获取task_mem_info
+struct task_mem_info *pid_to_task_mem_info(pid_t pid)
+{
+  struct task_mem_info *info;
+  list_for_every_entry(&task_list, info, struct task_mem_info, node)
+  {
+    if (info->pid == pid)
+    {
+      return info;
+    }
+  }
+  return NULL;
+}
+
+// 获取pid的内存信息
+void get_weights(pid_t pid)
+{
+  struct memchecker_metadata *metadata_list[CONFIG_MM_MEMCHECKER_PAGE_NUMBER];
+
+  int count = pid_to_metadata(pid, metadata_list);
+  if (count <= 0)
+  {
+    return;
+  }
+
+  // 获取pid对应的task_mem_info，没有则创建
+  struct task_mem_info *info = pid_to_task_mem_info(pid);
+  if (info == NULL)
+  {
+    struct task_mem_info *new_info =
+        (struct task_mem_info *)malloc(sizeof(struct task_mem_info));
+    new_info->pid = pid;
+    list_initialize(&new_info->node);
+    list_add_tail(&task_list, &new_info->node);
+    info = new_info;
+  }
+
+  info->unfreed_num = count;
+
+  clock_t now_time = clock_systime_ticks();
+  clock_t total_time = 0;
+  size_t total_size = 0;
+  struct memchecker_metadata *metadata = NULL;
+
+  for (int i = 0; i < count; i++)
+  {
+    metadata = metadata_list[i];
+    if (metadata->state == MEMCHECKER_ALLOCATED)
+    {
+      total_size += metadata->size;
+
+      clock_t active_time = now_time - metadata->alloc_track.ts;
+      total_time += active_time;
+
+      // 找最长和最短存活时间
+      if (active_time > info->active_time_max)
+      {
+        info->active_time_max = active_time;
+      }
+      if (info->active_time_min == 0 ||
+          active_time < info->active_time_min)
+      {
+        info->active_time_min = active_time;
+      }
+    }
+  }
+
+  info->total_size = total_size;
+
+  if (total_time > 0)
+  {
+    info->active_time_avg = total_time / count;
+  }
+}
+
+int weight_cal(struct task_mem_info *info)
+{
+  double size_score = size_base_score;
+  double count_score = count_base_score;
+  double time_score = time_base_score;
+
+  switch (TICK2SEC(info->active_time_avg) / 10)
+  {
+  case 0:
+  case 1:
+  case 2:
+  {
+    size_score *= 1;
+    break;
+  }
+  case 3:
+  case 4:
+  case 5:
+  {
+    size_score *= 1.1;
+    break;
+  }
+  case 6:
+  case 7:
+  case 8:
+  {
+    size_score *= 1.25;
+    break;
+  }
+  default:
+  {
+    size_score *= 1.5;
+    break;
+  }
+  }
+
+  size_score *= (double)info->total_size;
+  if (size_score > 100)
+  {
+    size_score = 100;
+  }
+
+  count_score *= (double)info->unfreed_num;
+  if (count_score > 100)
+  {
+    count_score = 100;
+  }
+
+  time_score *= (double)info->active_time_max;
+  if (time_score > 100)
+  {
+    time_score = 100;
+  }
+
+  double weight = size_weight * size_score +
+                  count_weight * count_score +
+                  time_weight * time_score;
+
+  return (int)weight;
 }

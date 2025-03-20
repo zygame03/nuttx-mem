@@ -415,6 +415,7 @@ static struct task_mem_stats *create_task_mem_stats(void)
   memset(p, 0, len);
   return p;
 }
+
 /****************************************************************************
  * Name: add_metadata_to_task_mem_stats
  *
@@ -432,18 +433,18 @@ int add_metadata_to_task_mem_stats(struct memchecker_metadata *metadata)
 {
   pid_t pid;
   struct task_mem_stats *tms = NULL;
-  struct tcb_s *v_tcb;
+  struct tcb_s *tcb;
   irqstate_t flags;
 
   if (!metadata)
   {
-    syslog(LOG_WARNING, "%s metadata can't be NULL%s\n", COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
+    syslog(LOG_WARNING, "%s metadata can't be NULL...%s\n", COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
     return -1;
   }
 
   pid = metadata->pid;
-  v_tcb = nxsched_get_tcb(pid);
-  if (!v_tcb)
+  tcb = nxsched_get_tcb(pid);
+  if (!tcb)
   {
     syslog(LOG_WARNING, "%sThe task(task_id:%u) doesn't exit...%s\n",
            COLOR_TABLE[COLOR_RED], tms->pid, COLOR_TABLE[COLOR_RESET]);
@@ -497,7 +498,7 @@ int add_metadata_to_task_mem_stats(struct memchecker_metadata *metadata)
   tms->init_timestamp = clock_systime_ticks();
   /**  初始化分值  */
   tms->score = 0;
-  memcpy(tms->appname, v_tcb->name, 32);
+  memcpy(tms->appname, tcb->name, 32);
   /** 初始化并插入链表中 */
   list_initialize(&tms->node_task_mem);
   flags = spin_lock_irqsave(&hf.tms_list_lock);

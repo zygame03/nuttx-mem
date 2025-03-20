@@ -18,6 +18,7 @@
 #include <sys/time.h>
 #include <time.h>
 #include <nuttx/atomic.h>
+#include <nuttx/syslog/syslog.h>
 #include "mmdebug.h"
 
 /****************************************************************************
@@ -696,7 +697,6 @@ void memchecker_init(void)
   list_initialize(&error_list);
 
   memchecker_init_pool();
-
   init_metadata_manager();
 
 #ifdef CONFIG_MM_MEMCHECKER_LEAKDETECTOR
