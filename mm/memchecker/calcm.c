@@ -5,6 +5,7 @@
 #include "calcm.h"
 #include "mmdebug.h"
 #include <syslog.h>
+#include <stdio.h>
 #include "utils.h"
 #include <nuttx/lib/math.h>
 
@@ -26,6 +27,9 @@ static int WEIGHT_TABLE[WEIGHT_NUM] = {
     [WEIGHT_ACTIVE_ALLOCS] = 8,
     [WEIGHT_CHUNCK_AND_SIZE] = 30,
     [WEIGHT_AGE] = 10};
+
+// 全局参数 测试外部调试
+volatile int dynamic_param = 8;
 
 enum LEAK_ERR
 {
@@ -91,6 +95,8 @@ float cal_w1(struct task_mem_stats *tms)
   /** 分别对应未释放次数， 未释放内存块大小，以及最终的权值 */
   int active_allocs, active_size;
   float extra_weight_val = 0.0, w1_val;
+
+  syslog(LOG_INFO, "dynamic_parm:%d ...\n", dynamic_param);
 
   if (!tms)
   {
