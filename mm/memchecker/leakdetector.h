@@ -7,6 +7,7 @@
 #include <nuttx/list.h>
 #include <nuttx/clock.h>
 #include <nuttx/sched.h>
+#include "calcm.h"
 
 /****************************************************************************
  *  struct task_stats_list_lock
@@ -31,9 +32,17 @@ struct task_stats_list_lock
  ****************************************************************************/
 struct task_mem_stats
 {
+  struct list_node node_task_mem; /*进程内存对象元数据链表 */
+
+  struct list_node metadata_list; /** 对应进程的内存泄漏信息链表 */
+
+  pid_t pid; /** 任务 ID  */
+
   uint16_t score; /**  进程实时得分分值,通过权值计算得到  ---限制其大小 */
 
-  uint16_t weighted_value[3]; /** 记录最近三次的权值 最终取平均值 */
+  uint16_t individual_score[3]; /**  对应进程的三个权重得分分值 */
+
+  double ratio[3];
 
   uint32_t count; /**  对应进程检测次数 */
 
@@ -42,18 +51,6 @@ struct task_mem_stats
   uint64_t init_timestamp; /** 对应结构体初始化时间戳  */
 
   uint64_t check_timestamp; /** 每次检测会更改的时间戳   */
-
-  pid_t pid; /** 任务 ID  */
-
-  uint32_t total_allocs; /**该进程的总分配次数*/
-
-  uint32_t active_allocs; /** 活跃的分配数量  */
-
-  uint32_t total_size; /**  总共分配的大小   */
-
-  uint32_t active_size; /** 仍然活跃的大小  */
-
-  struct list_node node_task_mem; /*进程内存对象元数据链表 */
 };
 
 /****************************************************************************
@@ -67,7 +64,7 @@ struct mm_standard_value
 };
 
 /****************************************************************************
- * Public Function Definitions
+ * Public Function Definitions 
  ****************************************************************************/
 void init_leak_detection(void);
 

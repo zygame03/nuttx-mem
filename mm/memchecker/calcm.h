@@ -31,6 +31,43 @@
 #include <nuttx/lib/math.h>
 #include "leakdetector.h"
 
+enum WEIGHT
+{
+  WEIGHT_ACTIVE_ALLOCS,
+  WEIGHT_CHUNCK_AND_SIZE,
+  WEIGHT_AGE,
+  WEIGHT_NUM
+};
+
+
+enum LEAK_ERR
+{
+  UNFREEED_NUM,
+  UNFREEED_CHUNK,
+  HIGH_GROWTH_RATE,
+  LEAK,
+  LEAK_ERR_NUM
+};
+
+struct mem_info
+{
+  size_t total_size;
+  size_t max_size;
+
+  int total_count;
+  int unfreed_count;
+
+  clock_t total_time;
+  clock_t max_time;
+
+  int avg_active;
+  int max_active;
+
+  double size_score;   // 内存大小基准分数
+  double count_score; // 未释放数量基准分数
+  double time_score;   // 存活时间基准分数
+};
+
 struct task_mem_stats;
 
 float cal_w1(struct task_mem_stats *tms);

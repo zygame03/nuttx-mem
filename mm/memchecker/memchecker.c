@@ -407,61 +407,36 @@ static void memchecker_guarded_free(const char *file, int line, void *addr)
   spin_lock(&metadata->lock);
 
   if (metadata->addr != (unsigned long)addr)
-  {
-    metadata->state = MEMCHECKER_ERROR;
-    metadata->error_type = ERROR_INVALID_FREE;
-    memchecker_report(metadata);
-    spin_unlock(&metadata->lock);
-    return;
-  }
-
-#ifdef CONFIG_MM_MEMCHECKER_LEAKDETECTOR
-  pid_t pid;
-  int i;
-  struct task_stats_list_lock *p = NULL;
-
-  pid = metadata->pid;
-  i = test_pid_in_tsll(pid);
-  switch (i)
-  {
-  case 0:
-    p = hf;
-    syslog(LOG_INFO, "changing metadata in linkedlist(hf)...\n");
-    break;
-  case 1:
-    p = lf;
-    syslog(LOG_INFO, "changing metadata in linkedlist(lf)...\n");
-    break;
-  }
-  i = update_task_mem_stats_when_free(p, metadata);
-  if (i)
-  {
-    syslog(LOG_INFO, "fail to update metadata...\n");
-  }
-#endif
-
-  if (metadata->state == MEMCHECKER_ALLOCATED)
-  {
-    for_each_canary(metadata, check_canary_byte);
-    metadata->state = MEMCHECKER_FREED;
-    list_delete_init(&metadata->node);
-    list_add_tail(&freed_list, &metadata->node);
-    for_each_canary(metadata, set_canary_byte);
-  }
-  else
-  {
-    for_each_canary(metadata, check_canary_byte);
-
-    if (metadata->state == MEMCHECKER_FREED)
     {
       metadata->state = MEMCHECKER_ERROR;
-      list_delete_init(&metadata->node);
-      list_add_tail(&error_list, &metadata->node);
+      metadata->error_type = ERROR_INVALID_FREE;
+      memchecker_report(metadata);
+      spin_unlock(&metadata->lock);
+      return;
     }
 
-    metadata->error_type = ERROR_INVALID_FREE;
-    memchecker_report(metadata);
-  }
+  if (metadata->state == MEMCHECKER_ALLOCATED)
+    {
+      for_each_canary(metadata, check_canary_byte);
+      metadata->state = MEMCHECKER_FREED;
+      list_delete_init(&metadata->node);
+      list_add_tail(&freed_list, &metadata->node);
+      for_each_canary(metadata, set_canary_byte);
+    }
+  else
+    {
+      for_each_canary(metadata, check_canary_byte);
+
+      if (metadata->state == MEMCHECKER_FREED)
+        {
+          metadata->state = MEMCHECKER_ERROR;
+          list_delete_init(&metadata->node);
+          list_add_tail(&error_list, &metadata->node);
+        }
+
+      metadata->error_type = ERROR_INVALID_FREE;
+      memchecker_report(metadata);
+    }
 
   metadata->free_track.ts = clock_systime_ticks();
   strcpy(metadata->free_track.file, file);
@@ -480,15 +455,15 @@ static void update_activity(struct memchecker_metadata *metadata)
   int change_intensity = __builtin_popcount(metadata->last_hash ^ current_hash);
 
   if (current_hash != metadata->last_hash)
-  {
-    metadata->activity_score += change_intensity * 2;
-    metadata->activity_score =
-        (metadata->activity_score > 100) ? 100 : metadata->activity_score;
-  }
+    {
+      metadata->activity_score += change_intensity * 2;
+      metadata->activity_score =
+          (metadata->activity_score > 100) ? 100 : metadata->activity_score;
+    }
   else
-  {
-    metadata->activity_score *= decay_factor;
-  }
+    {
+      metadata->activity_score *= decay_factor;
+    }
 
   metadata->last_hash = current_hash;
   syslog(LOG_INFO, "activity_score: %d", metadata->activity_score);
@@ -500,25 +475,25 @@ static void metadata_update_activity(void)
   struct list_node *node;
 
   for (node = allocated_list.next; node != &allocated_list; node = node->next)
-  {
-    metadata = list_entry(node, struct memchecker_metadata, node);
-    spin_lock(&metadata->lock);
-    update_activity(metadata);
-
-    if (metadata->activity_score < 10)
     {
-      syslog(LOG_WARNING, "Memory leak detected: %p - %p",
-             (void *)metadata->addr, (void *)metadata->addr + metadata->size);
-      metadata->error_type = ERROR_MEMORY_LEAK;
+      metadata = list_entry(node, struct memchecker_metadata, node);
+      spin_lock(&metadata->lock);
+      update_activity(metadata);
 
-      node = node->prev;
-      list_delete_init(&metadata->node);
-      list_add_tail(&error_list, &metadata->node);
-      memchecker_report(metadata);
+      if (metadata->activity_score < 10)
+        {
+          syslog(LOG_WARNING, "Memory leak detected: %p - %p",
+                (void *)metadata->addr, (void *)metadata->addr + metadata->size);
+          metadata->error_type = ERROR_MEMORY_LEAK;
+
+          node = node->prev;
+          list_delete_init(&metadata->node);
+          list_add_tail(&error_list, &metadata->node);
+          memchecker_report(metadata);
+        }
+
+      spin_unlock(&metadata->lock);
     }
-
-    spin_unlock(&metadata->lock);
-  }
 }
 
 static void metadata_timeout(void)
@@ -691,6 +666,7 @@ int pid_to_metadata(pid_t pid, struct memchecker_metadata **buffer)
 
 void memchecker_init(void)
 {
+  syslog_file_channel("/log/memchecker");
   list_initialize(&usable_list);
   list_initialize(&allocated_list);
   list_initialize(&freed_list);

@@ -59,6 +59,10 @@ struct memchecker_metadata
 {
   struct list_node node;
 
+// #ifdef MM_MEMCHECKER_LEAKDETECTOR
+  struct list_node node_for_ld;
+// #endif
+
   unsigned long addr;
 
   enum memchecker_state state;

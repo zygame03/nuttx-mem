@@ -509,11 +509,9 @@ int add_metadata_to_task_mem_stats(struct memchecker_metadata *metadata)
      * 很明显就不用再去查看状态了, 很明显有内容了  */
     if (tms->pid == pid)
     {
-      /** 内容暂时不全 */
-      tms->total_allocs++;
-      tms->active_allocs++;
-      tms->total_size += metadata->size;
-      tms->active_size += metadata->size;
+      list_initialize(&metadata->node_for_ld);
+      list_add_tail(&tms->metadata_list, &metadata->node_for_ld);
+
       spin_unlock_irqrestore(&hf.tms_list_lock, flags);
       DEBUG("out...\n");
       /** 正常情况下 此处的工作队列的状态是运行中...  */
@@ -539,10 +537,7 @@ int add_metadata_to_task_mem_stats(struct memchecker_metadata *metadata)
   /** 初始检查 */
   tms->count = 0;
   tms->pid = pid;
-  tms->total_allocs = 1;
-  tms->active_allocs = 1;
-  tms->total_size = metadata->size;
-  tms->active_size += metadata->size;
+
   /** 直接记录创建时时间戳 */
   tms->init_timestamp = clock_systime_ticks();
   /**  初始化分值  */
@@ -550,9 +545,13 @@ int add_metadata_to_task_mem_stats(struct memchecker_metadata *metadata)
   memcpy(tms->appname, tcb->name, 32);
   /** 初始化并插入链表中 */
   list_initialize(&tms->node_task_mem);
+
   flags = spin_lock_irqsave(&hf.tms_list_lock);
   list_add_tail(&hf.task_mem_status_list, &tms->node_task_mem);
   spin_unlock_irqrestore(&hf.tms_list_lock, flags);
+
+  list_initialize(&metadata->node_for_ld);
+  list_add_tail(&tms->metadata_list, &metadata->node_for_ld);
 
   /** 添加完毕以后, 工作队列是否正在使用需要判断 */
   if (!atomic_read_acquire(&hf.workequeue_status))
@@ -561,6 +560,7 @@ int add_metadata_to_task_mem_stats(struct memchecker_metadata *metadata)
   }
   return 0;
 }
+
 /****************************************************************************
  * Name: update_task_mem_stats_when_free
  *
@@ -606,13 +606,13 @@ int update_task_mem_stats_when_free(struct task_stats_list_lock *tsll, struct me
     if (tms->pid == pid)
     {
       /** 内容暂时不全 */
-      tms->active_allocs--;
-      tms->active_size -= metadata->size;
+      list_delete_init(&metadata->node_for_ld);
       spin_unlock_irqrestore(&tsll->tms_list_lock, flags);
       DEBUG("out...\n");
       return 0;
     }
   }
+
   /** 如果存在某些不明原因没有找到pid 走此条路径 释放锁 */
   syslog(LOG_WARNING, "%sSomehow, couldn't task(pid: ) has been deleted before...%s", COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
   spin_unlock_irqrestore(&tsll->tms_list_lock, flags);
