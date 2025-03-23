@@ -8,6 +8,8 @@
 #include <nuttx/clock.h>
 #include <nuttx/sched.h>
 #include "calcm.h"
+#define HISTORY_SIZE 60
+#define OP_WINDOW_SIZE 60
 
 /****************************************************************************
  *  struct task_stats_list_lock
@@ -34,15 +36,15 @@ struct task_mem_stats
 {
   struct list_node node_task_mem; /*进程内存对象元数据链表 */
 
-  struct list_node metadata_list; /** 对应进程的内存泄漏信息链表 */
-
   pid_t pid; /** 任务 ID  */
 
   uint16_t score; /**  进程实时得分分值,通过权值计算得到  ---限制其大小 */
 
-  uint16_t individual_score[3]; /**  对应进程的三个权重得分分值 */
+  HistoryBytesQueue history_bytes; /** 最近20次字节变化记录  */
 
-  double ratio[3];
+  OpQueue opq; /** 最近100次字节变化记录 */
+
+  size_t total_mm_size;
 
   uint32_t count; /**  对应进程检测次数 */
 
@@ -50,7 +52,26 @@ struct task_mem_stats
 
   uint64_t init_timestamp; /** 对应结构体初始化时间戳  */
 
-  uint64_t check_timestamp; /** 每次检测会更改的时间戳   */
+  /** 如果要用的话这里需要初始化 */
+  spinlock_t tms_lock; /** 把tms导出来以后, 加锁判断 */
+
+  uint64_t last_timestamp; /** 每次检测会更改的时间戳   */
+};
+
+struct rt_mem_info
+{
+  size_t total_mm_size;        /** 内存申请的总大小*/
+  size_t total_active_mm_size; /** 活跃内存使用的总大小 */
+  size_t max_mm_size;          /** 最大内存块大小 */
+
+  int total_alloc_count; /** 内存申请总数 */
+  int unfreed_count;     /** y未释放申请的次数 */
+
+  clock_t active_mm_total_time; /** 活跃内存的总存活时间 */
+  clock_t max_mm_time;          /** 内存块中存活的最长时间 */
+
+  int avg_active; /** todo */
+  int max_active; /** todo */
 };
 
 /****************************************************************************
@@ -63,8 +84,98 @@ struct mm_standard_value
   volatile uint32_t memory_residency_alert_time; /** 内存驻留时间 */
 };
 
+// 权重因子结构体
+typedef struct
+{
+  /** 未释放率引起的基本权重 */
+  float w_leak_rate;
+  /** 给出一个0.2的trend 基本值 */
+  float w_trend;
+  /**分配聚集度权重*/
+  float w_clustering;
+  /**内存年龄权重 */
+  float w_age;
+
+} weight_factors_t;
+
+// 针对于 每一节点下的搜索
+typedef struct
+{
+  size_t buffer[HISTORY_SIZE]; // 最近20次的内存大小
+  uint8_t front;               // 当前写入位置
+  uint8_t count;               // 当前有效数据量
+  uint8_t head;                // 当前有效数据量
+  /** 记住这里要进行初始化*/
+} HistoryBytesQueue;
+
+// 添加数据 这里其实可以直接优化 把它放在结构体的最先
+void hb_queue_push(HistoryBytesQueue *q, size_t data)
+{
+  /** 赋值 */
+  q->buffer[q->front] = data;
+  /** 移位 */
+  q->front = (q->front + 1) % HISTORY_SIZE;
+  if (q->count < HISTORY_SIZE)
+    q->count++;
+
+  /** 如果说实际数量小于 总大小 */
+  if (q->count == HISTORY_SIZE)
+    q->head = q->front;
+  else /** 此时就是从0开始遍历 */
+    q->head = 0;
+}
+
+// 获取第n秒前的数据（n=0表示最新） 历史字节数大小 查看增速
+size_t hb_queue_get(const HistoryBytesQueue *q, uint8_t n)
+{
+  if (n >= q->count)
+    return 0;
+  int index = (q->front - 1 - n + HISTORY_SIZE) % HISTORY_SIZE;
+  return q->buffer[index];
+}
+
+typedef enum
+{
+  ALLOC_LOG,
+  FREE_LOG
+} op_type_t;
+
+typedef struct
+{
+  op_type_t buffer[OP_WINDOW_SIZE]; // 最近20次的内存大小
+  uint8_t front;                    // 当前写入位置
+  uint8_t count;                    // 当前有效数据量
+  uint8_t head;                     // 当前有效数据量
+} OpQueue;
+
+// 添加新数据 获取历史 ___push metadata
+void op_queue_push(OpQueue *q, op_type_t data)
+{
+  q->buffer[q->front] = data;
+  q->front = (q->front + 1) % OP_WINDOW_SIZE;
+  if (q->count < OP_WINDOW_SIZE)
+    q->count++;
+  /** 如果说实际数量小于 总大小 */
+  if (q->count == HISTORY_SIZE)
+    q->head = q->front;
+  else /** 此时就是从0开始遍历 */
+    q->head = 0;
+}
+
+// void update_memory_snapshot()
+// {
+//   static uint32_t last_sec = 0;
+//   uint32_t current_sec = get_timestamp();
+
+//   if (current_sec != last_sec)
+//   {
+//     queue_push(&mem_history, current_mem_usage);
+//     last_sec = current_sec;
+//   }
+// }
+
 /****************************************************************************
- * Public Function Definitions 
+ * Public Function Definitions
  ****************************************************************************/
 void init_leak_detection(void);
 
@@ -81,4 +192,7 @@ int test_pid_in_tsll(pid_t pid);
 void init_high_fre_leak_detection(void);
 
 void init_low_fre_leak_detection(void);
+
+int get_task_mm_info(struct task_mem_stats *tms, struct rt_mem_info *rt_info);
+
 #endif

@@ -44,8 +44,6 @@ static struct work_s hf_g_leak_detection_work;
 
 static struct work_s lf_g_leak_detection_work;
 
-static struct work_s warn_g_leak_detection_work;
-
 /****************************************************************************
  * struct task_stats_list_lock @arg;  对应与链表访问相关的访问的元素
  *        @hf 高频
@@ -60,7 +58,7 @@ static struct task_stats_list_lock lf;
 
 static int move_between_list(struct task_mem_stats *tms, struct task_stats_list_lock *, struct task_stats_list_lock *);
 
-/*** 导出链表(对应高频工作队列) */
+/*** 导出链表(对应高频工作队列)  */
 void get_task_list_lock_hf(struct task_stats_list_lock **p)
 {
   *p = &hf;
@@ -82,6 +80,7 @@ void get_task_list_lock_lf(struct task_stats_list_lock **p)
  * Name:  clear_invalid_tms
  * Description:
  *    清理已经不必要的跟踪, 如进程已经不存在了
+ *    整理流程： 链表遍历已经不用的进程
  * Input Parameters:
  *  struct task_stats_list_lock *tsll
  * Returned Value:
@@ -101,8 +100,9 @@ static void clear_invalid_tms(struct task_stats_list_lock *tsll)
            COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
     return;
   }
-  /** 同时读取工作队列对应状态, 判断是否启用 */
-  if ((!atomic_read_acquire(&tsll->workequeue_status)))
+
+  /** 同时读取工作队列对应状态, 判断是否启用 , 若未启用此时链表必然为空*/
+  if (!atomic_read_acquire(&tsll->workequeue_status))
   {
     syslog(LOG_WARNING, "%s workqueue isn't in use...%s\n", COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
     return;
@@ -116,8 +116,11 @@ static void clear_invalid_tms(struct task_stats_list_lock *tsll)
     /** task == NULL  对应任务已经失效 */
     if (!task)
     {
-      syslog(LOG_INFO, "%s The task(pid: ) is no longer valid, deleting...%s\n", COLOR_TABLE[COLOR_BLUE], COLOR_TABLE[COLOR_RESET]);
+      syslog(LOG_INFO, "%s The task(pid: ) is no longer valid, deleting...%s\n",
+             COLOR_TABLE[COLOR_BLUE], COLOR_TABLE[COLOR_RESET]);
       list_delete(&tms->node_task_mem);
+      /** 数据清空, 并释放 */
+      memset(tms, 0, sizeof(struct task_mem_stats));
       free(tms);
     }
   }
@@ -151,7 +154,7 @@ static int is_task_list_empty(struct task_stats_list_lock *tsll)
 {
   irqstate_t flags;
 
-  if ((!tsll))
+  if (!tsll)
   {
     syslog(LOG_WARNING, "%s@tsll is NULL, which is not allowed...\n %s",
            COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
@@ -164,7 +167,11 @@ static int is_task_list_empty(struct task_stats_list_lock *tsll)
   {
     /** 对应检测下状态 ---额外检查修正, 确保功能正常 */
     if (atomic_read_acquire(&tsll->workequeue_status))
+    {
       atomic_set_release(&tsll->workequeue_status, 0);
+      syslog(LOG_WARNING, "%s Serious problems...\n %s",
+             COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
+    }
     DEBUG("out..\n");
     spin_unlock_irqrestore(&tsll->tms_list_lock, flags);
     return -1;
@@ -204,58 +211,11 @@ static void check_memory_leak(struct task_stats_list_lock *tsll)
     int sum_weighted_value = 0;
     int i;
 
-    /** 此处对元数据做出一些更改 */
-    tms->count += 1;
-    tms->check_timestamp = clock_systime_ticks();
-    /** 由于统计最近3次的 分数值此处的 [pos%3]对应每次检测的分数值 */
-    pos = tms->count - 1;
-
-    /**  权值计算逻辑 */
-    val1 = cal_w1(tms);
-    if (-1 == val1)
-    {
-      syslog(LOG_WARNING, "%s权值计算存在故障\n%s",
-             COLOR_TABLE[COLOR_BLUE], COLOR_TABLE[COLOR_RESET]);
-    }
-    tms->weighted_value[pos % 3] = val1;
-
-    /** 检测次数 >= 3次   ===> 看得分区间段是否正常
-     * 如果得分比较低的话 移入低频检测链表
-     *  此处逻辑待完善
-     */
-    if (tms->count >= 3)
-    {
-      if (tsll == &hf)
-      {
-        for (i = 0; i < 3; i++)
-        {
-          sum_weighted_value += tms->weighted_value[i];
-        }
-        if (sum_weighted_value < 60)
-        {
-          i = move_between_list(tms, &lf, tsll);
-          if (-1 == i)
-          {
-            syslog(LOG_INFO, "%s移动链表内容失败...请尽快排查错误%s\n", COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
-          }
-          syslog(LOG_INFO, "%s内容移动到低频链表成功...%s\n", COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
-          /***在这时 需要查看低频链表是否处于启动状态 */
-          if (atomic_read_acquire(&lf.tms_list_lock))
-          {
-            syslog(LOG_INFO, "%s低频链表扫描尚未启动...%s\n", COLOR_TABLE[COLOR_BLUE], COLOR_TABLE[COLOR_RESET]);
-            init_low_fre_leak_detection();
-          }
-        }
-      }
-    }
+    return;
   }
-  DEBUG("out \n");
-  spin_unlock_irqrestore(&tsll->tms_list_lock, flags);
-  return;
 }
-
 /****************************************************************************
- * Name : print_task_mem_stats
+ * Name : print_task_mem_stats  print_todo
  *  Description:
  *          输出打印单独进程对应链表中存储的内存状态信息
  * Input Parameters:
@@ -264,61 +224,34 @@ static void check_memory_leak(struct task_stats_list_lock *tsll)
  *       return 0 ===> 链表不为空
  *             -1 ===> 链表为空
  ****************************************************************************/
-/** 根据时间戳的影响进行排序 */
-/** void qsort(void *base, size_t nmemb, size_t size,
-                  int (*compar)(const void *, const void *));
 
-} */
-
-static void mm_metadata_sort(struct memchecker_metadata **buffer, int len)
+static void print_task_mem_stats(struct task_mem_stats *tms)
 {
-  int i, j;
+  struct rt_mem_info rt_info;
+  int i;
 
-  if (!buffer || 0 > len)
+  if (!tms)
   {
-    syslog(LOG_WARNING, "%s @buffer is NULL or length is negative...\n %s",
+    syslog(LOG_WARNING, "%stms can't be NULL...%s\n",
            COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
-    return;
+    return -1;
   }
-}
-
-static void print_basic_mm_metadata(struct memchecker_meatadata *mm_metadata)
-{
-  int i, j;
-  if (!mm_metadata)
+  i = get_info_from_metadata(tms, &rt_info);
+  if (i)
   {
-    syslog(LOG_WARNING, "%s @mm_metadata can't bu NULL...\n%s",
+    syslog(LOG_INFO, "%s failed to get real-time info...\n %s",
            COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
-    return;
+    return -1;
   }
-}
 
-static void print_task_mem_stats(pid_t pid)
-{
-  /** 输入某个进程号, 单独去打印某个进程下的内存使用状态 */
-  /** 获得pid 但是实际上还是要去寻找  */
-  /** 最近三次的权值计算情况 */
-  /** 如果报错的话把他提到报警链表中 */
-  /** todo here */
-  struct tcb_s *tcb = NULL;
-  int i, len;
-  struct memchecker_metadata *buffer[CONFIG_MM_MEMCHECKER_PAGE_NUMBER] = {0};
-
-  tcb = nxsched_get_tcb(pid);
-  if (!tcb)
-  {
-    syslog(LOG_WARNING, "%stask:%u doesn't exist...\n%s",
-           COLOR_TABLE[COLOR_RED], pid, COLOR_TABLE[COLOR_RESET]);
-    return;
-  }
-  len = pid_to_metadata(pid, &buffer);
-  mm_metadata_sort(&buffer, len);
-  for (i = 0; i < len; i++)
-  {
-    print_basic_mm_metadata(buffer[i]);
-  }
-  /*** 这里打印对应进程的内存分配信息 */
-  return;
+  syslog(LOG_INFO, "\n---------------\n");
+  syslog(LOG_INFO, "task_id: %u \n", tms->pid);
+  syslog(LOG_INFO, "app_name: %s \n", tms->appname);
+  syslog(LOG_INFO, "monitoring_time: %u \n", (tms->last_timestamp - tms->init_timestamp));
+  syslog(LOG_INFO, "total_size: %u \n", rt_info.total_mm_size);
+  syslog(LOG_INFO, "active_size: %u \n", rt_info.total_active_mm_size);
+  syslog(LOG_INFO, "unfreed_count: %u \n", rt_info.unfreed_count);
+  syslog(LOG_INFO, "---------------\n");
 }
 
 /*** 输出整个链表 */
@@ -345,25 +278,6 @@ static void print_task_list_stats(struct task_stats_list_lock *tsll)
   syslog(LOG_INFO, HF_TASK_MM_INFO);
   list_for_every_entry(&tsll->task_mem_status_list, tms, struct task_mem_stats, node_task_mem)
   {
-    syslog(LOG_INFO,
-           "%s\n"
-           "  |- task_pid: %u\n         "
-           "  |- total_allocs : %d\n    "
-           "  |- active_allocs: %d\n    "
-           "  |- total_size: %d(B)\n    "
-           "  |- active_size: %d(B)\n   "
-           "  |- security_score: %d\n   "
-           "  |- running_time: %ld(s)\n " MM_INFO_SEPARATOR
-           "%s",
-           COLOR_TABLE[COLOR_BLUE],
-           tms->pid,
-           tms->total_allocs,
-           tms->active_allocs,
-           tms->total_size,
-           tms->active_size,
-           tms->score,
-           (tms->check_timestamp - tms->init_timestamp) / 500,
-           COLOR_TABLE[COLOR_RESET]);
   }
   DEBUG("out...\n");
   spin_unlock_irqrestore(&tsll->tms_list_lock, flags);
@@ -387,14 +301,15 @@ static void leak_detection_worker(void *tsll_arg)
   struct work_s *g_leak_detection_work;
   struct task_stats_list_lock *tsll = NULL;
 
-  if ((!tsll_arg))
+  if (!tsll_arg)
   {
-    syslog(LOG_WARNING, "%s@tsll is NULL, which is not allowed...%s\n", COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
+    syslog(LOG_WARNING, "%s@tsll is NULL, which is not allowed...%s\n",
+           COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
     return;
   }
 
   tsll = (struct task_stats_list_lock *)tsll_arg;
-  if ((!atomic_read_acquire(&tsll->workequeue_status)))
+  if (!atomic_read_acquire(&tsll->workequeue_status))
   {
     syslog(LOG_WARNING, "%swokequeue(%s) isn't in use...\n %s",
            COLOR_TABLE[COLOR_RED], &hf == tsll ? "hf" : "lf", COLOR_TABLE[COLOR_RESET]);
@@ -407,21 +322,18 @@ static void leak_detection_worker(void *tsll_arg)
   if (is_task_list_empty(tsll))
     return;
   check_memory_leak(tsll);
-  /** 打印相关数据 */
-  // print_task_mem_stats(tsll);
-  /** 对应判断工作队列所对应的路径 */
   if (tsll == &hf)
   {
     timeout = HIGH_FRE;
     g_leak_detection_work = &hf_g_leak_detection_work;
-    syslog(LOG_INFO, "%schecking times(hf):%d...\n%s",
+    syslog(LOG_INFO, "%sworkqueue running times(hf):%d...\n%s",
            COLOR_TABLE[COLOR_BLUE], ++high_work_queue, COLOR_TABLE[COLOR_RESET]);
   }
   else
   {
     timeout = LOW_FRE;
     g_leak_detection_work = &lf_g_leak_detection_work;
-    syslog(LOG_INFO, "%schecking times(lf):%d...\n%s",
+    syslog(LOG_INFO, "%sworkqueue running times(lf):%d...\n%s",
            COLOR_TABLE[COLOR_BLUE], ++low_work_queue, COLOR_TABLE[COLOR_RESET]);
   }
 
@@ -436,17 +348,31 @@ static void leak_detection_worker(void *tsll_arg)
 void init_high_fre_leak_detection(void)
 {
   /** 将状态初始化为1  0代表未启动 1代表已经启动 */
+  if (atomic_read_acquire(&hf.workequeue_status))
+  {
+    syslog(LOG_INFO, "%s no need to restart workqueue(hf) again...%s\n",
+           COLOR_TABLE[COLOR_BLUE], COLOR_TABLE[COLOR_RESET]);
+    return;
+  }
   atomic_set_release(&hf.workequeue_status, 1);
-  syslog(LOG_INFO, "%shf workqueue is initializing...%s\n", COLOR_TABLE[COLOR_BLUE], COLOR_TABLE[COLOR_RESET]);
+  syslog(LOG_INFO, "%shf workqueue is initializing...%s\n",
+         COLOR_TABLE[COLOR_BLUE], COLOR_TABLE[COLOR_RESET]);
   leak_detection_worker(&hf);
 }
 
 /**初始化低频工作队列 */
 void init_low_fre_leak_detection(void)
 {
+  if (atomic_read_acquire(&lf.workequeue_status))
+  {
+    syslog(LOG_INFO, "%s no need to restart workqueue(hf) again...%s\n",
+           COLOR_TABLE[COLOR_BLUE], COLOR_TABLE[COLOR_RESET]);
+    return;
+  }
   /** 设置读取状态 */
   atomic_set_release(&lf.workequeue_status, 1);
-  syslog(LOG_INFO, "%slf workqueue is initializing...%s\n", COLOR_TABLE[COLOR_BLUE], COLOR_TABLE[COLOR_RESET]);
+  syslog(LOG_INFO, "%slf workqueue is initializing...%s\n",
+         COLOR_TABLE[COLOR_BLUE], COLOR_TABLE[COLOR_RESET]);
   leak_detection_worker(&lf);
 }
 
@@ -458,9 +384,7 @@ static struct task_mem_stats *create_task_mem_stats(void)
   len = sizeof(struct task_mem_stats);
   p = (struct task_mem_stats *)malloc(len);
   if (!p)
-  {
     return NULL;
-  }
   memset(p, 0, len);
   return p;
 }
@@ -487,7 +411,8 @@ int add_metadata_to_task_mem_stats(struct memchecker_metadata *metadata)
 
   if (!metadata)
   {
-    syslog(LOG_WARNING, "%s metadata can't be NULL...%s\n", COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
+    syslog(LOG_WARNING, "%s metadata can't be NULL...%s\n",
+           COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
     return -1;
   }
 
@@ -504,56 +429,66 @@ int add_metadata_to_task_mem_stats(struct memchecker_metadata *metadata)
   DEBUG("in...\n");
   list_for_every_entry(&hf.task_mem_status_list, tms, struct task_mem_stats, node_task_mem)
   {
-    /** 已经存在该线程的初始信息状态,
-     * 如果是这种情况的话，
-     * 很明显就不用再去查看状态了, 很明显有内容了  */
     if (tms->pid == pid)
     {
-      list_initialize(&metadata->node_for_ld);
-      list_add_tail(&tms->metadata_list, &metadata->node_for_ld);
-
-      spin_unlock_irqrestore(&hf.tms_list_lock, flags);
+      /** 增添一些记录 */
+      hb_queue_push(&tms->history_bytes, metadata->size);
+      op_queue_push(&tms->opq, ALLOC_LOG);
+      tms->total_mm_size += metadata->size;
       DEBUG("out...\n");
+      spin_unlock_irqrestore(&hf.tms_list_lock, flags);
       /** 正常情况下 此处的工作队列的状态是运行中...  */
-      if ((!atomic_read_acquire(&hf.workequeue_status)))
+      if (!atomic_read_acquire(&hf.workequeue_status))
       {
-        syslog(LOG_INFO, "%s Something wrong...%s\n",
+        syslog(LOG_INFO, "%s Something wrong, seirous problems...%s\n",
                COLOR_TABLE[COLOR_BLUE], COLOR_TABLE[COLOR_RESET]);
         return -1;
       }
       return 0;
     }
   }
-  DEBUG("out...\n");
-  spin_unlock_irqrestore(&hf.tms_list_lock, flags);
-
   /**  对应首次创建task_mem_stats 初始化 */
   tms = create_task_mem_stats();
   if (!tms)
   {
-    syslog(LOG_INFO, "%s tms:NULL\n %s", COLOR_TABLE[COLOR_BLUE], COLOR_TABLE[COLOR_RESET]);
+    syslog(LOG_WARNING, "%s tms:NULL\n %s",
+           COLOR_TABLE[COLOR_BLUE], COLOR_TABLE[COLOR_RESET]);
     return -1;
   }
+
+  /** 初始化历史记录窗口 */
+  memset(tms->history_bytes.buffer, 0, HISTORY_SIZE);
+  tms->history_bytes.count = 0;
+  tms->history_bytes.head = 0;
+  tms->history_bytes.front = 0;
+
+  /** 初始操作窗口记录 */
+  memset(tms->opq.buffer, 0, OP_WINDOW_SIZE);
+  tms->history_bytes.count = 0;
+  tms->history_bytes.head = 0;
+  tms->history_bytes.front = 0;
+
+  tms->total_mm_size = 0;
+
+  hb_queue_push(&tms->history_bytes, metadata->size);
+  op_queue_push(&tms->opq, ALLOC_LOG);
+  tms->total_mm_size += metadata->size;
   /** 初始检查 */
   tms->count = 0;
   tms->pid = pid;
-
   /** 直接记录创建时时间戳 */
   tms->init_timestamp = clock_systime_ticks();
   /**  初始化分值  */
   tms->score = 0;
-  memcpy(tms->appname, tcb->name, 32);
-  /** 初始化并插入链表中 */
+  memcpy(tms->appname, tcb->name, strlen(tcb->name));
+  /** 初始化节点 */
   list_initialize(&tms->node_task_mem);
 
-  flags = spin_lock_irqsave(&hf.tms_list_lock);
+  /** 插入 */
   list_add_tail(&hf.task_mem_status_list, &tms->node_task_mem);
   spin_unlock_irqrestore(&hf.tms_list_lock, flags);
-
-  list_initialize(&metadata->node_for_ld);
-  list_add_tail(&tms->metadata_list, &metadata->node_for_ld);
-
-  /** 添加完毕以后, 工作队列是否正在使用需要判断 */
+  /** 添加完毕以后, 工作队列是否正在使用需要判断, 默认首先添加进入高频工作队列 */
+  /** 若高频工作队列未被启动的话, 启动高频工作队列*/
   if (!atomic_read_acquire(&hf.workequeue_status))
   {
     init_high_fre_leak_detection();
@@ -572,20 +507,22 @@ int add_metadata_to_task_mem_stats(struct memchecker_metadata *metadata)
  *  既然是update 正在释放的时候被调用这个时候 显然就不可能出现
  *  不存在活跃任务的情况...
  * Returned Value:
- *  return  0,  indicates  succeeding to updatate task_mem_statas or failing to update
+ *  return  0,  表示成功更新
+ *          1,  表示出现错误
  ****************************************************************************/
 int update_task_mem_stats_when_free(struct task_stats_list_lock *tsll, struct memchecker_metadata *metadata)
 {
-  pid_t pid;
   struct task_mem_stats *tms = NULL;
+  struct tcb_s *tcb = NULL;
   irqstate_t flags;
+  pid_t pid;
 
-  if ((!tsll))
+  if (!tsll)
   {
     syslog(LOG_WARNING, "%s @tsll is NULL, which is not allowed ... %s", COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
     return -1;
   }
-  if ((!metadata))
+  if (!metadata)
   {
     syslog(LOG_WARNING, "%s @metadata is NULL, which is not allowed ... %s", COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
     return -1;
@@ -597,125 +534,231 @@ int update_task_mem_stats_when_free(struct task_stats_list_lock *tsll, struct me
     return -1;
   }
 
+  /**  额外检查pid 是否存在  */
   pid = metadata->pid;
+  tcb = nxsched_get_tcb(pid);
+  if (!tcb)
+  {
+    syslog(LOG_WARNING, "%sThe task(task_id:%u) doesn't exit, serious problem...%s\n",
+           COLOR_TABLE[COLOR_RED], metadata->pid, COLOR_TABLE[COLOR_RESET]);
+    return -1;
+  }
   flags = spin_lock_irqsave(&tsll->tms_list_lock);
   DEBUG("in...\n");
   list_for_every_entry(&tsll->task_mem_status_list, tms, struct task_mem_stats, node_task_mem)
   {
     /** 已经存在该线程的初始信息状态 */
-    if (tms->pid == pid)
+    if (tms->pid == metadata->pid)
     {
-      /** 内容暂时不全 */
-      list_delete_init(&metadata->node_for_ld);
+      /** 对于释放后的重新添加 */
+      hb_queue_push(&tms->opq, FREE_LOG);
+      op_queue_push(&tms->history_bytes, metadata->size);
       spin_unlock_irqrestore(&tsll->tms_list_lock, flags);
       DEBUG("out...\n");
       return 0;
     }
   }
-
   /** 如果存在某些不明原因没有找到pid 走此条路径 释放锁 */
-  syslog(LOG_WARNING, "%sSomehow, couldn't task(pid: ) has been deleted before...%s", COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
+  syslog(LOG_WARNING, "%sSomehow, couldn't task(pid: ) has been deleted before...%s",
+         COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
+  DEBUG("out...\n");
   spin_unlock_irqrestore(&tsll->tms_list_lock, flags);
   return -1;
 }
 
-/** 供memchecker模块进行判断 函数中自带加锁 故禁止在锁环境中使用 */
+/****************************************************************************
+ * Name: test_pid_in_tsll
+ *
+ * Description:
+ *      通过进程号 查找工作队列具体位于哪个工作队列
+ *      注意 请勿在链表加锁情况下使用此函数, 会引发死锁
+ * Input Parameters:
+ *      pid_t pid
+ * Returned Value:
+ *  return  0,  表示成功更新
+ *          1,  表示出现错误
+ ****************************************************************************/
 int test_pid_in_tsll(pid_t pid)
 {
   irqstate_t flags;
   struct task_mem_stats *tms = NULL;
 
-  if ((!atomic_read_acquire(&hf.workequeue_status) &&
-       !atomic_read_acquire(&lf.workequeue_status)))
+  /** 如果两个工作队列都没有启动 */
+  if (!atomic_read_acquire(&hf.workequeue_status) && !atomic_read_acquire(&lf.workequeue_status))
   {
+    syslog(LOG_WARNING, "%sNo workqueue is in use...%s\n",
+           COLOR_TABLE[COLOR_RED], COLOR_RESET);
     return -1;
   }
-
-  flags = spin_lock_irqsave(&hf.tms_list_lock);
-  list_for_every_entry(&hf.task_mem_status_list, tms, struct task_mem_stats, node_task_mem)
+  /** 如何高频工作队列处于启动状态 */
+  if (atomic_read_acquire(&hf.workequeue_status))
   {
-    /** tms 存在于高频队列中 */
-    if (tms->pid == pid)
+    flags = spin_lock_irqsave(&hf.tms_list_lock);
+    DEBUG("in...\n");
+    list_for_every_entry(&hf.task_mem_status_list, tms, struct task_mem_stats, node_task_mem)
     {
-      spin_unlock_irqrestore(&hf.tms_list_lock, flags);
-      return 0;
+      /** tms 存在于高频队列中 */
+      if (tms->pid == pid)
+      {
+        DEBUG("out...\n");
+        spin_unlock_irqrestore(&hf.tms_list_lock, flags);
+        return 0;
+      }
     }
   }
+  DEBUG("out...\n");
   spin_unlock_irqrestore(&hf.tms_list_lock, flags);
 
-  flags = spin_lock_irqsave(&lf.tms_list_lock);
-  list_for_every_entry(&lf.task_mem_status_list, tms, struct task_mem_stats, node_task_mem)
+  if (atomic_read_acquire(&lf.workequeue_status))
   {
-    /** tms 存在于低频队列中 */
-    if (tms->pid == pid)
+    flags = spin_lock_irqsave(&lf.tms_list_lock);
+    DEBUG("in...\n");
+    list_for_every_entry(&lf.task_mem_status_list, tms, struct task_mem_stats, node_task_mem)
     {
-      spin_unlock_irqrestore(&lf.tms_list_lock, flags);
-      return 1;
+      /** tms 存在于低频队列中 */
+      if (tms->pid == pid)
+      {
+        DEBUG("out...\n");
+        spin_unlock_irqrestore(&lf.tms_list_lock, flags);
+        return 1;
+      }
     }
   }
+  DEBUG("out...\n");
   spin_unlock_irqrestore(&lf.tms_list_lock, flags);
   return -1;
 }
 
-/** 正处于哪个tsll当中  一共就只存在两个tsll  free 就全部消除*/
-/** 就只有两种可能 去*/
-static int move_between_list(struct task_mem_stats *tms, struct task_stats_list_lock *dest_tsll, struct task_stats_list_lock *cur_tsll)
+/****************************************************************************
+ * Name :move_tms_to_hf_list  move_tms_to_lf_list
+ *
+ * Description:
+ *      将对应的监管信息从高频队列, 低频队列之间移动...
+ *      注意在移动过后相应要判断减少了tms的链表是否为空 已判定是否需要终止工作队列 避免空转
+ * Input Parameters:
+ *      pid_t pid
+ * Returned Value:
+ *  return  0,  表示成功更新
+ *          1,  表示出现错误
+ ****************************************************************************/
+static int move_tms_to_hf_list(struct task_mem_stats *tms)
 {
   irqstate_t flags;
 
   if (!tms)
   {
-    syslog(LOG_WARNING, "%s@tms is NULL, which is not allowed... \n%s",
+    syslog(LOG_WARNING, "%s tms can't be NULL...\n%s",
            COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
     return -1;
   }
-  if (!cur_tsll || !dest_tsll)
+  flags = spin_lock_irqsave(&hf.tms_list_lock);
+  DEBUG("in...\n");
+  /** 确保该节点已经初始化过了 */
+  list_initialize(&tms->node_task_mem);
+  list_add_tail(&hf.task_mem_status_list, &tms->node_task_mem);
+  DEBUG("out...\n");
+  spin_unlock_irqrestore(&hf.task_mem_status_list, flags);
+  return 0;
+}
+
+static int move_tms_to_lf_list(struct task_mem_stats *tms)
+{
+  irqstate_t flags;
+
+  if (!tms)
   {
-    syslog(LOG_WARNING, "%s@cur_tsll or @dest_tsll is NULL, which is not allowed... \n%s",
+    syslog(LOG_WARNING, "%s tms can't be NULL...\n%s",
            COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
     return -1;
   }
-  /** 当前的工作队列需要处于运行状态, 否则容易出现严重问题*/
-  if ((!atomic_read_acquire(&cur_tsll->workequeue_status)))
+  flags = spin_lock_irqsave(&lf.tms_list_lock);
+  DEBUG("in...\n");
+  /** 确保该节点已经初始化过了 */
+  list_initialize(&tms->node_task_mem);
+  list_add_tail(&lf.task_mem_status_list, &tms->node_task_mem);
+  DEBUG("out...\n");
+  spin_unlock_irqrestore(&lf.task_mem_status_list, flags);
+  return 0;
+}
+
+/****************************************************************************
+ * Name: get_task_mm_info
+ *
+ * Description:
+ *    实时获得进程的相关内存信息
+ *    通过调用get_info_from_metadata
+ * Input Parameters:
+ * Returned Value:
+ *  return  0,  indicates  succeeding to updatate task_mem_statas or failing to update
+ *  整体用链表锁 导出tms 以后访问内部数据需要用tms_lock
+ *  pid or tms  把tms 导出来内部再加锁 加锁再导出
+ *  通过tms去导出链表
+ *  作为参数都不能为NULL
+ ******************************************************************************/
+static int get_info_from_metadata(struct task_mem_stats *tms, struct rt_mem_info *rt_info)
+{
+  struct tcb_s *tcb = NULL;
+  struct memchecker_metadata *metadata = NULL;
+  struct list_node *node = NULL;
+  size_t total_active_mm_size = 0,
+         max_mm_size = 0, total_mm_size = 0;
+  int total_alloc_count = 0, unfreed_count = 0;
+  clock_t active_mm_total_time = 0, max_mm_time = 0;
+  irqstate_t tms_flags;
+
+  if (!tms)
   {
-    syslog(LOG_WARNING, "%s workqueue(%s) is not in use ... \n%s",
-           COLOR_TABLE[COLOR_RED], &hf == cur_tsll ? "hf" : "lf", COLOR_TABLE[COLOR_RESET]);
+    syslog(LOG_WARNING, "%stms can't be NULL ...\n%s",
+           COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
+    return -1;
+  }
+  if (!rt_info)
+  {
+    syslog(LOG_WARNING, "%srt_info can't be NULL ...\n%s",
+           COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
     return -1;
   }
 
-  syslog(LOG_INFO, "%s Detection of the task(ID : %u) is moving from %s %s..\n",
-         COLOR_TABLE[COLOR_BLUE],
-         tms->pid,
-         cur_tsll == &hf ? "hf to lf" : "lf to hf",
-         COLOR_TABLE[COLOR_RESET]);
-
-  flags = spin_lock_irqsave(&cur_tsll->tms_list_lock);
-  DEBUG("in...\n");
-  list_delete(&tms->node_task_mem);
-  /** 删除之后可能造成链表的状态为空 此时需要更新工作队列的状态 */
-  if (list_is_empty(&cur_tsll->task_mem_status_list))
+  tcb = nxsched_get_tcb(tms->pid);
+  if (!tcb)
   {
-    atomic_set_release(&cur_tsll->workequeue_status, 0);
-  }
-  DEBUG("out...\n");
-  spin_unlock_irqrestore(&cur_tsll->tms_list_lock, flags);
-
-  /** 移动进入目标链表 */
-  flags = spin_lock_irqsave(&dest_tsll->tms_list_lock);
-  DEBUG("in...\n");
-  list_add_tail(&dest_tsll->task_mem_status_list, &tms->node_task_mem);
-  DEBUG("out...\n");
-  spin_unlock_irqrestore(&cur_tsll->tms_list_lock, flags);
-  /** 对应工作队列如果未启动 init */
-  if (!atomic_read_acquire(&dest_tsll->workequeue_status))
-  {
-    if (dest_tsll == &lf)
-      init_low_fre_leak_detection();
-    else
-      init_high_fre_leak_detection();
+    syslog(LOG_WARNING, "%s task doesn't exist now, serious problems...\n%s",
+           COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
+    return -1;
   }
 
-  if (!atomic_read_acquire(&cur_tsll->workequeue_status))
-    atomic_set_release(&cur_tsll->workequeue_status, 0);
+  /** 这里可能存在一定隐患 */
+  node = &tms->metadata_list;
+  list_for_every_entry(node, metadata, struct memchecker_metadata, node_for_ld)
+  {
+    spin_lock(&metadata->lock);
+    DEBUG("in...\n");
+    total_alloc_count += 1;          /** 统计内存申请总数 */
+    total_mm_size += metadata->size; /** 进程内存操作的总大小*/
+
+    if (metadata->state == MEMCHECKER_ALLOCATED)
+    {
+      clock_t time;
+      /** 最大存活块的大小 */
+      unfreed_count += 1;
+      /** 活跃的内存量累计求和 */
+      total_active_mm_size += metadata->size;
+      /** 最大存活块的大小 */
+      max_mm_size = (metadata->size > max_mm_size) ? metadata->size : max_mm_size;
+      time = clock_systime_ticks() - metadata->alloc_track.ts;
+      active_mm_total_time += time;
+      max_mm_time = (time > max_mm_time) ? time : max_mm_time;
+    }
+    DEBUG("out...\n");
+    spin_unlock(&metadata->lock);
+  }
+  /** 统一赋值操作 */
+  rt_info->total_active_mm_size = total_active_mm_size;
+  rt_info->max_mm_size = max_mm_size;
+  rt_info->total_alloc_count = total_alloc_count;
+  rt_info->unfreed_count = unfreed_count;
+  rt_info->active_mm_total_time = active_mm_total_time;
+  rt_info->max_mm_time = max_mm_time;
+  rt_info->total_mm_size = total_mm_size;
   return 0;
 }
