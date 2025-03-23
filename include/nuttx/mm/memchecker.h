@@ -86,11 +86,7 @@ struct memchecker_metadata
 
 void memchecker_init(void);
 
-struct memchecker_metadata *index_to_metadata(int index);
-
-struct memchecker_metadata *addr_to_metadata(unsigned long addr);
-
-int pid_to_metadata(pid_t pid, struct memchecker_metadata **buffer);
+int pid_to_metadata(pid_t pid, struct memchecker_metadata **metadata_list);
 
 int get_active_size_multi_time(pid_t pid);
 
