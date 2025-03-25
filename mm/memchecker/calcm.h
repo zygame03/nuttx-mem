@@ -31,9 +31,7 @@
 #include <nuttx/lib/math.h>
 #include "leakdetector.h"
 
-#define MAX_MEMORY 1024
 #define MAX_AGE_THRESHOLD (3000)
-#define CHECKING_TIMES (30)
 #define MAX_MM_UNFREED_COUNT (10)
 #define MAX_MM_ACTIVE_SIZE (1024)
 
