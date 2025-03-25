@@ -5,125 +5,182 @@
 #include "calcm.h"
 #include "mmdebug.h"
 #include <syslog.h>
+#include <stdio.h>
 #include "utils.h"
 #include <nuttx/list.h>
 #include <nuttx/lib/math.h>
 
-#define MEMORY_ACTIVE_SIZE (1024)
-#define MEMORY_TIME_BASE 500
-/** 内存的生存周期时间 20s  */
-#define ACTIVE_TIME_PERIOD 20
-
-/**  指定权值 */
-static int WEIGHT_TABLE[WEIGHT_NUM] = {
-  [WEIGHT_ACTIVE_ALLOCS] = 8,
-  [WEIGHT_CHUNCK_AND_SIZE] = 30,
-  [WEIGHT_AGE] = 10};
-
-
-void print_leak_err_info(enum LEAK_ERR err)
+volatile int dynamic_param = 12;
+void report_err(LEAK_ERR err, pid_t pid)
 {
   switch (err)
   {
-  case UNFREEED_NUM:
-    syslog(LOG_INFO, "%s Excessive amount of unreleased memory!!!%s\n", COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
+  case TOO_MANY_UNFREED_ALLOC:
+    syslog(LOG_INFO, "%s [task:%u] Too Many unfreed allocs...%s\n",
+           COLOR_TABLE[COLOR_RED], pid, COLOR_TABLE[COLOR_RESET]);
     break;
-  case UNFREEED_CHUNK:
-    syslog(LOG_INFO, "%s Too much unfreed memory!!!%s\n", COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
+  case OVER_MAX_ACTIVE_SIZE:
+    syslog(LOG_INFO, "%s [task:%u] Active memory size is too much...%s\n",
+           COLOR_TABLE[COLOR_RED], pid, COLOR_TABLE[COLOR_RESET]);
     break;
-  case HIGH_GROWTH_RATE:
-    syslog(LOG_INFO, "%s内存申请增速过快!!!%s\n", COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
+  default:
+    syslog(LOG_INFO, "%s [task:%u] might have some meomory leak problems...%s\n",
+           COLOR_TABLE[COLOR_RED], pid, COLOR_TABLE[COLOR_RESET]);
     break;
-  case LEAK:
-    syslog(LOG_INFO, "%smemory leaks!!!%s\n", COLOR_TABLE[COLOR_RE
-      
   }
 }
 
-int is_basic_err(struct task_mem_stats *tms)
+/*** 此处只是针对元数据做一些基本的跟踪 如果出现问题， 则此时  生成一个最近的分析日志 */
+int basic_meomory_leak_check(struct rt_mem_info *rt_info, struct task_mem_stats *tms)
 {
-  /** 此时表示一定存在有未释放的内存 */
-  if (!tms->active_allocs && tms->active_size)
+  pid_t pid = tms->pid;
+  bool isErr = false;
+
+  if (!rt_info || !tms)
   {
-    print_leak_err_info(LEAK);
-    syslog(LOG_WARNING, " %s There is memory leak...%s\n",
+    syslog(LOG_INFO, "%s rt_info or tms is NULL, which is not allowed...%s",
            COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
     return -1;
   }
-  /** 返回0 表示不存在基础性的问题 */
-  return 0;
+
+  /** --- 活跃块数过多  --- */
+  if (rt_info->unfreed_count > MAX_MM_UNFREED_COUNT)
+  {
+    report_err(TOO_MANY_UNFREED_ALLOC, pid);
+    isErr = true;
+  }
+  /** --- 活跃内存超出正常范围 --- */
+  if (rt_info->max_mm_size > MAX_MM_ACTIVE_SIZE)
+  {
+    report_err(OVER_MAX_ACTIVE_SIZE, pid);
+    isErr = true;
+  }
+  if (isErr)
+    return 1;
+  else
+    return 0;
 }
 
-// 获取pid的内存信息
-static void get_mem_info(struct task_mem_stats *tms, struct mem_info *info)
+//  动态调整部分权重值
+static void update_weights(struct rt_mem_info *rt_info, weight_factors_t *w, struct task_mem_stats *tms)
 {
-  clock_t now_time = clock_systime_ticks();
+  const float mem_usage = (float)rt_info->total_active_mm_size / MAX_MEMORY;
 
-  struct memchecker_metadata *metadata = NULL;
+  /**  内存压力越大，趋势权重越高 */
+  w->w_trend = 0.3 + 0.5 * mem_usage;
 
-  list_for_every_entry
-    (&tms->metadata_list, metadata, struct memchecker_metadata, node_for_ld)
-    {
-      info->total_count++;
-      if(metadata->state == MEMCHECKER_ALLOCATED)
-        {
-          info->unfreed_count++;
+  // 未释放频率越高，聚集度权重越高
+  float alloc_freq = (float)rt_info->unfreed_count / (tms->total_alloc_count);
+  w->w_clustering = 0.2 + 0.3 * alloc_freq;
 
-          info->total_size += metadata->size;
-          if(metadata->size > info->max_size)
-            {
-              info->max_size = metadata->size;
-            }
-
-          info->total_time += now_time - metadata->alloc_track.ts;
-          if(now_time - metadata->alloc_track.ts > info->max_time)
-            {
-              info->max_time = now_time - metadata->alloc_track.ts;
-            }
-        }
-      else if(metadata->state == MEMCHECKER_FREED)
-        {
-          info->total_time += 
-            metadata->free_track.ts - metadata->alloc_track.ts;
-          if(metadata->free_track.ts - metadata->alloc_track.ts > 
-              info->max_time)
-            {
-              info->max_time = 
-                metadata->free_track.ts - metadata->alloc_track.ts;
-            }
-        }
-    }
-
-  //此处是基础分值的赋值
-  info->size_score = 1;
-  info->count_score = 5;
-  info->time_score = 1;
-
-  return;
+  // 固定权重部分
+  w->w_leak_rate = 0.4;
+  /** 内存年龄 */
+  w->w_age = 0.1;
 }
 
-int weight_cal(struct task_mem_stats *tms)
+/** 关键指标计算 */
+// 1. 未释放率（0~1） 50 100 毫无疑问 是可以把tms 传输进来的
+float calc_leak_rate(const struct rt_mem_info *rt_info, const struct task_mem_stats *tms)
 {
-  struct mem_info info = {0};
-  get_mem_info(tms, &info);
+  if (!tms->total_alloc_count)
+    return 0.0f;
+  /*** 未释放率 */
+  INFO("unfreed_count:%d\n", rt_info->unfreed_count);
+  INFO("total_alloc_count:%d\n", tms->total_alloc_count);
+  return (float)(rt_info->unfreed_count) / tms->total_alloc_count;
+}
 
-  info.size_score *= info.max_time / 1000;
-  info.size_score *= info.unfreed_count / info.total_count;
+// 进行60s的检查
+// 2. 内存增长趋势（使用线性回归）  高于5次检查以后*//
+static float calc_trend_coeff(struct rt_mem_info *rt_info, struct task_mem_stats *tms)
+{
+  float sum_x = 0.0f, sum_y = 0.0f, sum_xy = 0.0f, sum_xx = 0.0f;
+  float numerator, denominator, slope;
+  const int n = tms->history_bytes.count;
 
-  tms->individual_score[0] = info.size_score * info.total_size;
+  if ((tms->count < CHECKING_TIMES) || (tms->history_bytes.count < CHECKING_TIMES))
+  {
+    syslog(LOG_WARNING, "%s count < 60, can't calculate trend coeff...\n%s",
+           COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
+    return 0.0f;
+  }
 
-  tms->individual_score[1] = info.count_score * info.unfreed_count;
+  for (int i = 0; i < n; ++i)
+  {
+    sum_x += i;
+    sum_y += hb_queue_get(&tms->history_bytes, i);
+    INFO("history_bytes[%d]: %d\n",
+         i, hb_queue_get(&tms->history_bytes, i));
+    sum_xy += i * hb_queue_get(&tms->history_bytes, i);
+    sum_xx += i * i;
+  }
 
-  info.time_score *= info.total_time / 100;
+  /** 最小二乘法 */
+  numerator = n * sum_xy - sum_x * sum_y;
+  denominator = n * sum_xx - sum_x * sum_x;
+  /* 如果说分母为0 */
+  /** 一般来讲 不会分母不会为0*/
+  slope = (numerator) / (denominator);
+  // mon->trend_coeff = slope;
+  return slope;
+}
 
-  tms->individual_score[2] = info.time_score * info.max_time;
+// 3. 分配聚集度（基于香农熵） 暂时无法计算
+static float calc_clustering(struct task_mem_stats *tms)
+{
+  uint32_t count[4] = {0}; // 统计四个时间段的分配次数
+  const uint32_t window_len = tms->opq.count;
 
-  double score = 0;
-  for(int i = 0; i < 3; i++)
+  for (uint32_t i = 0; i < window_len; ++i)
+  {
+    if (tms->opq.buffer[tms->opq.head + 1] == ALLOC_LOG)
     {
-      score += tms->individual_score[i] * tms->ratio[i];
+      count[i % 4]++; // 将窗口分为4个时段
     }
-  tms->score = score;
+  }
+  // 计算熵值
+  float entropy = 0.0f;
+  for (int j = 0; j < 4; ++j)
+  {
+    if (count[j] > 0)
+    {
+      float p = (float)count[j] / window_len;
+      entropy -= p * logf(p);
+    }
+  }
+  // 熵越低说明分配越集中
+  return 1.0f - (entropy / logf(4));
+}
 
-  return score;
+// 4. 内存年龄评分  /*** 超过一分钟 > 30s  */
+static float calc_age_score(struct rt_mem_info *rt_info, struct task_mem_stats *tms)
+{
+  uint32_t current_tick = clock_systime_ticks();
+  float max_age = 0.0f;
+  max_age = rt_info->max_mm_time;
+
+  return max_age / MAX_AGE_THRESHOLD; // 超过阈值则得1分
+}
+
+/**  */
+float calculate_leak_score(struct rt_mem_info *rt_info, struct task_mem_stats *tms)
+{
+  // 更新权重
+  weight_factors_t w;
+  update_weights(rt_info, &w, tms);
+
+  // 计算各指标
+  const float R = calc_leak_rate(rt_info, tms);
+  const float T = calc_trend_coeff(rt_info, tms);
+  const float C = calc_clustering(tms);
+  const float A = calc_age_score(rt_info, tms);
+
+  syslog(LOG_INFO, "%sR:%.2f T:%.2f C:%.2f A:%.2f \n%s",
+         COLOR_TABLE[COLOR_GREEN], R, T, C, A, COLOR_TABLE[COLOR_RESET]);
+  // 综合评分
+  return (R * w.w_leak_rate) +
+         (T * w.w_trend) +
+         (C * w.w_clustering) +
+         (A * w.w_age);
 }

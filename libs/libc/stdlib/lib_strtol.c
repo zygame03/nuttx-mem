@@ -61,65 +61,65 @@ long strtol(FAR const char *nptr, FAR char **endptr, int base)
   char sign = 0;
 
   if (nptr)
+  {
+    /* Skip leading spaces */
+
+    lib_skipspace(&nptr);
+
+    /* Check for leading + or - */
+
+    if (*nptr == '-' || *nptr == '+')
     {
-      /* Skip leading spaces */
-
-      lib_skipspace(&nptr);
-
-      /* Check for leading + or - */
-
-      if (*nptr == '-' || *nptr == '+')
-        {
-          sign = *nptr;
-          nptr++;
-        }
-
-      /* Get the unsigned value */
-
-      accum = strtoul(nptr, endptr, base);
-
-      /* Correct the sign of the result and check for overflow */
-
-      if (sign == '-')
-        {
-          const unsigned long limit = ((unsigned long)-(LONG_MIN + 1)) + 1;
-
-          if (accum > limit)
-            {
-              set_errno(ERANGE);
-              retval = LONG_MIN;
-            }
-          else
-            {
-              retval = (accum == limit) ? LONG_MIN : -(long)accum;
-            }
-        }
-      else
-        {
-          if (accum > LONG_MAX)
-            {
-              set_errno(ERANGE);
-              retval = LONG_MAX;
-            }
-          else
-            {
-              retval = accum;
-            }
-        }
+      sign = *nptr;
+      nptr++;
     }
+
+    /* Get the unsigned value */
+
+    accum = strtoul(nptr, endptr, base);
+
+    /* Correct the sign of the result and check for overflow */
+
+    if (sign == '-')
+    {
+      const unsigned long limit = ((unsigned long)-(LONG_MIN + 1)) + 1;
+
+      if (accum > limit)
+      {
+        set_errno(ERANGE);
+        retval = LONG_MIN;
+      }
+      else
+      {
+        retval = (accum == limit) ? LONG_MIN : -(long)accum;
+      }
+    }
+    else
+    {
+      if (accum > LONG_MAX)
+      {
+        set_errno(ERANGE);
+        retval = LONG_MAX;
+      }
+      else
+      {
+        retval = accum;
+      }
+    }
+  }
 
   /* Return the final pointer to the unused value */
 
   if (endptr)
+  {
+    if (sign)
     {
-      if (sign)
-        {
-          if (*((*endptr) - 1) == sign)
-            {
-              (*endptr)--;
-            }
-        }
+      if (*((*endptr) - 1) == sign)
+      {
+        (*endptr)--;
+      }
     }
+  }
 
   return retval;
 }
