@@ -253,7 +253,6 @@ static void check_memory_leak(struct task_stats_list_lock *tsll)
   struct task_mem_stats *tms = NULL;
   struct task_mem_stats *temp = NULL;
   struct task_stats_list_lock *dest_tsll = NULL;
-  struct memchecker_metadata metadata_list[20] = {0};
   irqstate_t flags;
 
   if (!tsll)
@@ -279,16 +278,20 @@ static void check_memory_leak(struct task_stats_list_lock *tsll)
     tms->count++;
     tms->last_timestamp = clock_systime_ticks();
     memset(&rt_info, 0, sizeof rt_info);
+    DEBUG();
     i = get_info_by_pid(tms->pid, &rt_info);
+    DEBUG();
     if (i)
     {
       syslog(LOG_WARNING, "%sfailed to get info by pid...%s\n",
              COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
       continue;
     }
+    DEBUG();
     /** --- 记录当下活字节 --- */
     hb_queue_push(&tms->history_bytes, rt_info.total_active_mm_size);
     i = basic_meomory_leak_check(&rt_info, tms);
+    DEBUG();
     if (i)
     {
       // todo 这里初始化需要初始化为0
@@ -296,6 +299,7 @@ static void check_memory_leak(struct task_stats_list_lock *tsll)
       continue;
     }
 
+    DEBUG();
     if (tms->count > CHECKING_TIMES)
     {
       float score = calculate_leak_score(rt_info, tms);
@@ -820,7 +824,9 @@ int get_info_by_pid(pid_t pid, struct rt_mem_info *rt_info)
   }
   // todo
   struct memchecker_metadata *metadata_list[20] = {0};
+  DEBUG();
   count = pid_to_metadata(pid, metadata_list);
+  DEBUG();
   if (0 > count)
   {
     syslog(LOG_INFO, "%sserious problems...count < 0...%s\n",
