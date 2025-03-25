@@ -19,7 +19,7 @@
  *  高频检测时间 HIGH_FRE
  *  高频检测时间 LOW_FRE
  ****************************************************************************/
-#define HIGH_FRE (100)
+#define HIGH_FRE (2000)
 #define LOW_FRE (20000)
 
 /****************************************************************************
@@ -90,7 +90,7 @@ size_t hb_queue_get(const HistoryBytesQueue *q, uint8_t n)
   {
     syslog(LOG_WARNING, "%s hbqueue is NULL, which is not allowed...%s\n",
            COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
-    return;
+    return -1;
   }
   /*** 获取从head开始的第几位数据 */
   return q->buffer[(q->head + n) % HISTORY_SIZE];
@@ -295,6 +295,7 @@ static void check_memory_leak(struct task_stats_list_lock *tsll)
       tms->warning_count++;
       continue;
     }
+
     if (tms->count > CHECKING_TIMES)
     {
       float score = calculate_leak_score(rt_info, tms);
@@ -684,7 +685,7 @@ int test_pid_in_tsll(pid_t pid)
   if (!atomic_read_acquire(&hf.workequeue_status) && !atomic_read_acquire(&lf.workequeue_status))
   {
     syslog(LOG_WARNING, "%sNo workqueue is in use...%s\n",
-           COLOR_TABLE[COLOR_RED], COLOR_RESET);
+           COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
     return -1;
   }
   /** 如何高频工作队列处于启动状态 */
@@ -798,8 +799,7 @@ int get_info_by_pid(pid_t pid, struct rt_mem_info *rt_info)
   struct memchecker_metadata *metadata = NULL;
   struct list_node *node = NULL;
   int count, i;
-  size_t total_active_mm_size = 0,
-         max_mm_size = 0, total_mm_size = 0;
+  size_t total_active_mm_size = 0, max_mm_size = 0, total_mm_size = 0;
   int total_alloc_count = 0, unfreed_count = 0;
   clock_t active_mm_total_time = 0, max_mm_time = 0;
   irqstate_t tms_flags;
@@ -819,8 +819,8 @@ int get_info_by_pid(pid_t pid, struct rt_mem_info *rt_info)
     return -1;
   }
   // todo
-  struct memchecker_metadata metadata_list[20] = {0};
-  count = pid_to_metadata(pid, &metadata_list);
+  struct memchecker_metadata *metadata_list[20] = {0};
+  count = pid_to_metadata(pid, metadata_list);
   if (0 > count)
   {
     syslog(LOG_INFO, "%sserious problems...count < 0...%s\n",
@@ -830,13 +830,13 @@ int get_info_by_pid(pid_t pid, struct rt_mem_info *rt_info)
 
   for (i = 0; i < count; i++)
   {
-    if (metadata_list[i].state == MEMCHECKER_ALLOCATED)
+    if (metadata_list[i]->state == MEMCHECKER_ALLOCATED)
     {
       clock_t time;
       unfreed_count += 1;
-      total_active_mm_size += metadata_list[i].size;
-      max_mm_size = (metadata_list[i].size > max_mm_size) ? metadata_list[i].size : max_mm_size;
-      time = clock_systime_ticks() - metadata_list[i].alloc_track.ts;
+      total_active_mm_size += metadata_list[i]->size;
+      max_mm_size = (metadata_list[i]->size > max_mm_size) ? metadata_list[i]->size : max_mm_size;
+      time = clock_systime_ticks() - metadata_list[i]->alloc_track.ts;
       active_mm_total_time += time;
       max_mm_time = (time > max_mm_time) ? time : max_mm_time;
     }

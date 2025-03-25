@@ -530,7 +530,6 @@ static void *memchecker_guarded_alloc(const char *file, int line, size_t size)
   int i;
   /*** 一开始默认都是添加到高频扫描链表中 */
   /*** 如果不为空, 则默认   */
-  WARN();
   i = add_metadata_to_task_mem_stats(metadata);
   if (i)
   {
@@ -554,14 +553,14 @@ static void memchecker_guarded_free(const char *file, int line, void *addr)
   irqstate_t flags;
   spin_lock(&metadata->lock);
 
-  if (metadata->addr != (unsigned long)addr)
-  {
-    metadata->state = MEMCHECKER_ERROR;
-    metadata->error_type = ERROR_INVALID_FREE;
-    memchecker_report(metadata);
-    spin_unlock(&metadata->lock);
-    return;
-  }
+  // if (metadata->addr != (unsigned long)addr)
+  // {
+  //   metadata->state = MEMCHECKER_ERROR;
+  //   metadata->error_type = ERROR_INVALID_FREE;
+  //   memchecker_report(metadata);
+  //   spin_unlock(&metadata->lock);
+  //   return;
+  // }
 
   if (metadata->state == MEMCHECKER_ALLOCATED)
   {
@@ -599,8 +598,7 @@ static void memchecker_guarded_free(const char *file, int line, void *addr)
   metadata->free_track.num_stack_entries =
       up_backtrace(nxsched_get_tcb(metadata->pid),
                    (void **)metadata->free_track.stack_entries, 32, 0);
-#ifndef CONFIG_MM_MEMCHECKER_LEAKDETECTOR
-  WARN();
+#ifdef CONFIG_MM_MEMCHECKER_LEAKDETECTOR
   int i;
   i = update_task_mem_stats_when_free(metadata);
   if (i)
@@ -695,7 +693,6 @@ static void metadata_timeout(void)
       list_add_tail(&usable_list.head, &metadata->node);
       spin_unlock_irqrestore(&usable_list.lock, usable_list_flags);
 #else
-      list_delete(&metadata->node_for_ld);
       free((void *)metadata->addr);
       free(metadata);
 #endif
