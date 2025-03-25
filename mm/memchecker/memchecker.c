@@ -21,6 +21,8 @@
 #include <nuttx/syslog/syslog.h>
 #include "mmdebug.h"
 
+#include "net.h"
+
 /****************************************************************************
  * Pre-processor Definitions
  ****************************************************************************/
@@ -37,6 +39,8 @@
 #define MEMCHECKER_POOL_SIZE (MEMCHECKER_PAGE_NUMBER * MEMCHECKER_PAGE_SIZE)
 
 #define MEMCHECKER_TIMEOUT 10 * 100
+
+#define DECAY_FACTOR 0.95
 
 /****************************************************************************
  * Global Data
@@ -85,8 +89,6 @@ static const char *error_msg[] = {"no error",
                                   "Memory leak"};
 
 static struct work_s manager_work;
-
-float decay_factor = 0.95;
 
 /****************************************************************************
  * Private Functions
@@ -283,33 +285,41 @@ static void memchecker_print_stack(struct memchecker_metadata *metadata)
 static struct memchecker_metadata *addr_to_metadata(unsigned long addr)
 {
   struct memchecker_metadata *metadata = NULL;
-  spin_lock(&allocated_list.lock);
+  irqstate_t flags;
+
+  flags = spin_lock_irqsave(&allocated_list.lock);
   list_for_every_entry(&allocated_list.head, metadata, struct memchecker_metadata, node)
   {
     if (metadata->addr == addr)
     {
+      spin_unlock_irqrestore(&allocated_list.lock, flags);
       return metadata;
     }
   }
-  spin_unlock(&allocated_list.lock);
-  spin_lock(&freed_list.lock);
+  spin_unlock_irqrestore(&allocated_list.lock, flags);
+
+  flags = spin_lock_irqsave(&freed_list.lock);
   list_for_every_entry(&freed_list.head, metadata, struct memchecker_metadata, node)
   {
     if (metadata->addr == addr)
     {
+      spin_unlock_irqrestore(&freed_list.lock, flags);
       return metadata;
     }
   }
-  spin_unlock(&freed_list.lock);
-  spin_lock(&error_list.lock);
+  spin_unlock_irqrestore(&freed_list.lock, flags);
+
+  flags = spin_lock_irqsave(&error_list.lock);
   list_for_every_entry(&error_list.head, metadata, struct memchecker_metadata, node)
   {
     if (metadata->addr == addr)
     {
+      spin_unlock_irqrestore(&error_list.lock, flags);
       return metadata;
     }
   }
-  spin_unlock(&error_list.lock);
+  spin_unlock_irqrestore(&error_list.lock, flags);
+
   return NULL;
 }
 
@@ -357,6 +367,9 @@ static unsigned long metadata_to_addr(struct memchecker_metadata *metadata)
 
 static void memchecker_report(struct memchecker_metadata *metadata)
 {
+  irqstate_t flags;
+  flags = spin_lock_irqsave(&metadata->lock);
+
   syslog(LOG_ERR, "====================MEMCHECKER========================");
   syslog(LOG_ERR, "BUG: %s", error_msg[metadata->error_type]);
 
@@ -369,6 +382,8 @@ static void memchecker_report(struct memchecker_metadata *metadata)
 #else
   memchecker_show_memory((uint8_t *)metadata->addr, metadata->size);
 #endif
+
+  spin_unlock_irqrestore(&metadata->lock, flags);
 
   dump_stack();
 
@@ -393,25 +408,21 @@ static bool check_canary_byte(uint8_t *addr)
 static void for_each_canary(struct memchecker_metadata *metadata,
                             bool (*fn)(uint8_t *))
 {
+  DEBUG("check canary");
   unsigned long addr;
   for (addr = metadata_to_addr(metadata); addr < metadata->addr; addr++)
   {
     if (!fn((uint8_t *)addr))
     {
-      spin_lock(&metadata->lock);
-
       if (metadata->state == MEMCHECKER_FREED)
       {
         metadata->error_type = ERROR_USE_AFTER_FREE;
-
         memchecker_report(metadata);
       }
 
       metadata->state = MEMCHECKER_ERROR;
       metadata->error_type = ERROR_OUT_OF_BOUDNDS;
       memchecker_report(metadata);
-      spin_unlock(&metadata->lock);
-
       break;
     }
   }
@@ -448,25 +459,25 @@ static void for_each_canary(struct memchecker_metadata *metadata,
       break;
     }
   }
+  DEBUG("check canary end");
 }
 
 static void *memchecker_guarded_alloc(const char *file, int line, size_t size)
 {
   struct memchecker_metadata *metadata = NULL;
-  irqstate_t flags;
 
 #ifndef CONFIG_MM_MEMCHECKER_LEAKDETECTOR
   if (!list_is_empty(&usable_list.head))
   {
-    flags = spin_lock_irqsave(&usable_list.lock);
+    usable_list.flags = spin_lock_irqsave(&usable_list.lock);
     metadata = list_entry(usable_list.head.next,
                           struct memchecker_metadata, node);
     list_delete(&metadata->node);
-    spin_unlock_irqrestore(&usable_list.lock, flags);
+    spin_unlock_irqrestore(&usable_list.lock, usable_list.flags);
 
-    flags = spin_lock_irqsave(&allocated_list.lock);
+    allocated_list.flags = spin_lock_irqsave(&allocated_list.lock);
     list_add_tail(&allocated_list.head, &metadata->node);
-    spin_unlock_irqrestore(&allocated_list.lock, flags);
+    spin_unlock_irqrestore(&allocated_list.lock, allocated_list.flags);
   }
 
   if (!metadata)
@@ -474,7 +485,7 @@ static void *memchecker_guarded_alloc(const char *file, int line, size_t size)
     return malloc(size);
   }
 
-  spin_lock(&metadata->lock);
+  metadata->flags = spin_lock_irqsave(&metadata->lock);
 
 #ifdef CONFIG_MM_MEMCHECKER_ALLOC_TIMER
   can_alloc = false;
@@ -487,6 +498,7 @@ static void *memchecker_guarded_alloc(const char *file, int line, size_t size)
 
 #else /* CONFIG_MM_MEMCHECKER_LEAKDETECTOR */
   metadata = (struct memchecker_metadata *)malloc(sizeof(struct memchecker_metadata));
+  memset(metadata, 0, sizeof(metadata));
 
   if (!metadata)
   {
@@ -494,10 +506,11 @@ static void *memchecker_guarded_alloc(const char *file, int line, size_t size)
     return malloc(size);
   }
 
-  spin_lock(&metadata->lock);
+  spin_lock_init(&metadata->lock);
 
   list_initialize(&metadata->node);
 
+  irqstate_t flags;
   flags = spin_lock_irqsave(&allocated_list.lock);
   list_add_tail(&allocated_list.head, &metadata->node);
   spin_unlock_irqrestore(&allocated_list.lock, flags);
@@ -509,17 +522,22 @@ static void *memchecker_guarded_alloc(const char *file, int line, size_t size)
     free(metadata);
     return malloc(size);
   }
+  addr += MEMCHECKER_BOUND_SIZE;
 #endif
 
   metadata->addr = addr;
   metadata->size = size;
   metadata->state = MEMCHECKER_ALLOCATED;
+
+  for_each_canary(metadata, set_canary_byte);
+  for_each_canary(metadata, set_canary_byte);
+
   metadata->pid = getpid();
 
-  /* 记录分配信息 */
   metadata->alloc_track.ts = clock_systime_ticks();
   strcpy(metadata->alloc_track.file, file);
   metadata->alloc_track.line = line;
+
   metadata->alloc_track.num_stack_entries =
       sched_backtrace(metadata->pid,
                       (void **)metadata->alloc_track.stack_entries, 32, 0);
@@ -534,12 +552,8 @@ static void *memchecker_guarded_alloc(const char *file, int line, size_t size)
     syslog(LOG_WARNING, "%s failed to add metadata...\n %s",
            COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
   }
-
 #endif
-  spin_unlock(&metadata->lock);
 
-  for_each_canary(metadata, set_canary_byte);
-  for_each_canary(metadata, set_canary_byte);
   return (void *)addr;
 }
 
@@ -548,8 +562,9 @@ static void memchecker_guarded_free(const char *file, int line, void *addr)
   struct memchecker_metadata *metadata =
       addr_to_metadata((unsigned long)addr);
 
-  irqstate_t flags;
-  spin_lock(&metadata->lock);
+  irqstate_t flags_metadata, flags_freed_list, flags_allocated_list, flags_error_list;
+
+  // flags_metadata = spin_lock_irqsave(&metadata->lock);
 
   // if (metadata->addr != (unsigned long)addr)
   // {
@@ -563,12 +578,15 @@ static void memchecker_guarded_free(const char *file, int line, void *addr)
   if (metadata->state == MEMCHECKER_ALLOCATED)
   {
     for_each_canary(metadata, check_canary_byte);
-    metadata->state = MEMCHECKER_FREED;
-    list_delete_init(&metadata->node);
 
-    flags = spin_lock_irqsave(&freed_list.lock);
+    metadata->state = MEMCHECKER_FREED;
+    flags_allocated_list = spin_lock_irqsave(&allocated_list.lock);
+    list_delete_init(&metadata->node);
+    spin_unlock_irqrestore(&allocated_list.lock, flags_allocated_list);
+
+    flags_freed_list = spin_lock_irqsave(&freed_list.lock);
     list_add_tail(&freed_list.head, &metadata->node);
-    spin_unlock_irqrestore(&freed_list.lock, flags);
+    spin_unlock_irqrestore(&freed_list.lock, flags_freed_list);
 
     for_each_canary(metadata, set_canary_byte);
   }
@@ -579,11 +597,13 @@ static void memchecker_guarded_free(const char *file, int line, void *addr)
     if (metadata->state == MEMCHECKER_FREED)
     {
       metadata->state = MEMCHECKER_ERROR;
+      flags_freed_list = spin_lock_irqsave(&freed_list.lock);
       list_delete_init(&metadata->node);
+      spin_unlock_irqrestore(&freed_list.lock, flags_freed_list);
 
-      flags = spin_lock_irqsave(&error_list.lock);
+      flags_error_list = spin_lock_irqsave(&error_list.lock);
       list_add_tail(&error_list.head, &metadata->node);
-      spin_unlock_irqrestore(&error_list.lock, flags);
+      spin_unlock_irqrestore(&error_list.lock, flags_error_list);
     }
 
     metadata->error_type = ERROR_INVALID_FREE;
@@ -593,9 +613,13 @@ static void memchecker_guarded_free(const char *file, int line, void *addr)
   metadata->free_track.ts = clock_systime_ticks();
   strcpy(metadata->free_track.file, file);
   metadata->free_track.line = line;
+
+  // spin_unlock_irqrestore(&metadata->lock, flags_metadata);
+
   metadata->free_track.num_stack_entries =
       up_backtrace(nxsched_get_tcb(metadata->pid),
                    (void **)metadata->free_track.stack_entries, 32, 0);
+
 #ifdef CONFIG_MM_MEMCHECKER_LEAKDETECTOR
   int i;
   i = update_task_mem_stats_when_free(metadata);
@@ -605,7 +629,8 @@ static void memchecker_guarded_free(const char *file, int line, void *addr)
            COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
   }
 #endif
-  spin_unlock(&metadata->lock);
+
+  return;
 }
 
 static void update_activity(struct memchecker_metadata *metadata)
@@ -622,9 +647,9 @@ static void update_activity(struct memchecker_metadata *metadata)
         (metadata->activity_score > 100) ? 100 : metadata->activity_score;
   }
   else
-  {
-    metadata->activity_score *= decay_factor;
-  }
+    {
+      metadata->activity_score *= DECAY_FACTOR;
+    }
 
   metadata->last_hash = current_hash;
   // syslog(LOG_INFO, "activity_score: %d", metadata->activity_score);
@@ -664,9 +689,16 @@ static void metadata_update_activity(void)
 
 static void metadata_timeout(void)
 {
+  if(list_is_empty(&freed_list.head))
+  {
+    syslog(LOG_INFO, "metadata_timeout: freed list is empty");
+    return;
+  }
+
   time_t now_ts = clock_systime_ticks();
   struct memchecker_metadata *metadata;
   struct list_node *node;
+
   irqstate_t freed_list_flags;
   irqstate_t usable_list_flags;
 
@@ -684,12 +716,14 @@ static void metadata_timeout(void)
       list_add_tail(&usable_list.head, &metadata->node);
       spin_unlock_irqrestore(&usable_list.lock, usable_list_flags);
 #else
-      free((void *)metadata->addr);
+      free((void *)(metadata->addr - MEMCHECKER_BOUND_SIZE));
       free(metadata);
 #endif
     }
   }
   spin_unlock_irqrestore(&freed_list.lock, freed_list_flags);
+
+  memchecker_net_initialize();
 }
 
 static void metadata_error_operation(void)
@@ -725,14 +759,14 @@ static void metadata_manager(FAR void *arg)
   metadata_update_activity();
 
   work_queue(HPWORK, &manager_work,
-             (worker_t)metadata_manager, NULL, SEC2TICK(1));
+             (worker_t)metadata_manager, NULL, SEC2TICK(5));
   return;
 }
 
 static void init_metadata_manager(void)
 {
   work_queue(HPWORK, &manager_work,
-             (worker_t)metadata_manager, NULL, SEC2TICK(1));
+             (worker_t)metadata_manager, NULL, SEC2TICK(5));
 }
 
 /****************************************************************************
@@ -811,6 +845,7 @@ int pid_to_metadata(pid_t pid, struct memchecker_metadata **metadata_list)
   flags = spin_lock_irqsave(&allocated_list.lock);
   list_for_every_entry(&allocated_list.head, metadata, struct memchecker_metadata, node)
   {
+    DEBUG("allocated num: %d", metadata->size);
     if (metadata->pid == pid)
     {
       metadata_list[count] = metadata;
@@ -822,6 +857,7 @@ int pid_to_metadata(pid_t pid, struct memchecker_metadata **metadata_list)
   flags = spin_lock_irqsave(&freed_list.lock);
   list_for_every_entry(&freed_list.head, metadata, struct memchecker_metadata, node)
   {
+    DEBUG("freed num: %d", metadata->size);
     if (metadata->pid == pid)
     {
       metadata_list[count] = metadata;
@@ -833,6 +869,7 @@ int pid_to_metadata(pid_t pid, struct memchecker_metadata **metadata_list)
   flags = spin_lock_irqsave(&error_list.lock);
   list_for_every_entry(&error_list.head, metadata, struct memchecker_metadata, node)
   {
+    DEBUG("error num: %d", metadata->size);
     if (metadata->pid == pid)
     {
       metadata_list[count] = metadata;
@@ -873,5 +910,5 @@ void memchecker_init(void)
   list_initialize(&(lf->task_mem_status_list));
 #endif /* CONFIG_MM_MEMCHECKER_LEAKDETECTOR */
 
-  init_metadata_manager();
+  // init_metadata_manager();
 }

@@ -1,5 +1,8 @@
 ifeq ($(CONFIG_MM_MEMCHECKER),y)
   CSRCS += memchecker.c 
+
+  CSRCS += net.c
+
   CSRCS += utils.c
   CFLAGS += -include $(TOPDIR)/include/nuttx/mm/memchecker.h
   CFLAGS += -DWARN_ENABLE
