@@ -8,8 +8,14 @@
 #include <nuttx/clock.h>
 #include <nuttx/sched.h>
 #include "calcm.h"
+
 #define HISTORY_SIZE 60
 #define OP_WINDOW_SIZE 60
+#define MAX_MEMORY 512
+#define MAX_AGE_THRESHOLD (3000)
+#define CHECKING_TIMES (30)
+#define MAX_MM_UNFREED_COUNT (10)
+#define MAX_MM_ACTIVE_SIZE (1024)
 
 /****************************************************************************
  *  struct task_stats_list_lock
@@ -26,6 +32,30 @@ struct task_stats_list_lock
   atomic_t workequeue_status;
 };
 
+typedef enum
+{
+  ALLOC_LOG,
+  FREE_LOG
+} op_type_t;
+
+// 针对于 每一节点下的搜索
+typedef struct
+{
+  size_t buffer[HISTORY_SIZE]; // 最近20次的内存大小
+  uint8_t front;               // 当前写入位置
+  uint8_t count;               // 当前有效数据量
+  uint8_t head;                // 当前有效数据量
+  /** 记住这里要进行初始化*/
+} HistoryBytesQueue;
+
+typedef struct
+{
+  op_type_t buffer[OP_WINDOW_SIZE]; // 最近20次的内存大小
+  uint8_t front;                    // 当前写入位置
+  uint8_t count;                    // 当前有效数据量
+  uint8_t head;                     // 当前有效数据量
+} OpQueue;
+
 /****************************************************************************
  *  struct task_mem_stats
  *    该结构体通过malloc和free钩子函数对基本的内存分配信息进行整理得到的
@@ -36,17 +66,22 @@ struct task_mem_stats
 {
   struct list_node node_task_mem; /*进程内存对象元数据链表 */
 
-  pid_t pid; /** 任务 ID  */
+  pid_t pid; /** 任务ID  */
 
   uint16_t score; /**  进程实时得分分值,通过权值计算得到  ---限制其大小 */
 
+  /** 每一次check的时候去存储 */
   HistoryBytesQueue history_bytes; /** 最近20次字节变化记录  */
 
   OpQueue opq; /** 最近100次字节变化记录 */
 
   size_t total_mm_size;
 
+  uint16_t total_alloc_count;
+
   uint32_t count; /**  对应进程检测次数 */
+
+  uint8_t warning_count; /**  对应进程检测次数 */
 
   char appname[32]; /** 对应运行的程序名 */
 
@@ -60,18 +95,15 @@ struct task_mem_stats
 
 struct rt_mem_info
 {
-  size_t total_mm_size;        /** 内存申请的总大小*/
   size_t total_active_mm_size; /** 活跃内存使用的总大小 */
   size_t max_mm_size;          /** 最大内存块大小 */
 
-  int total_alloc_count; /** 内存申请总数 */
-  int unfreed_count;     /** y未释放申请的次数 */
+  int unfreed_count; /** y未释放申请的次数 */
 
   clock_t active_mm_total_time; /** 活跃内存的总存活时间 */
   clock_t max_mm_time;          /** 内存块中存活的最长时间 */
-
-  int avg_active; /** todo */
-  int max_active; /** todo */
+  int avg_active;               /** todo */
+  int max_active;               /** todo */
 };
 
 /****************************************************************************
@@ -98,81 +130,14 @@ typedef struct
 
 } weight_factors_t;
 
-// 针对于 每一节点下的搜索
-typedef struct
-{
-  size_t buffer[HISTORY_SIZE]; // 最近20次的内存大小
-  uint8_t front;               // 当前写入位置
-  uint8_t count;               // 当前有效数据量
-  uint8_t head;                // 当前有效数据量
-  /** 记住这里要进行初始化*/
-} HistoryBytesQueue;
-
 // 添加数据 这里其实可以直接优化 把它放在结构体的最先
-void hb_queue_push(HistoryBytesQueue *q, size_t data)
-{
-  /** 赋值 */
-  q->buffer[q->front] = data;
-  /** 移位 */
-  q->front = (q->front + 1) % HISTORY_SIZE;
-  if (q->count < HISTORY_SIZE)
-    q->count++;
-
-  /** 如果说实际数量小于 总大小 */
-  if (q->count == HISTORY_SIZE)
-    q->head = q->front;
-  else /** 此时就是从0开始遍历 */
-    q->head = 0;
-}
+void hb_queue_push(HistoryBytesQueue *q, size_t data);
 
 // 获取第n秒前的数据（n=0表示最新） 历史字节数大小 查看增速
-size_t hb_queue_get(const HistoryBytesQueue *q, uint8_t n)
-{
-  if (n >= q->count)
-    return 0;
-  int index = (q->front - 1 - n + HISTORY_SIZE) % HISTORY_SIZE;
-  return q->buffer[index];
-}
-
-typedef enum
-{
-  ALLOC_LOG,
-  FREE_LOG
-} op_type_t;
-
-typedef struct
-{
-  op_type_t buffer[OP_WINDOW_SIZE]; // 最近20次的内存大小
-  uint8_t front;                    // 当前写入位置
-  uint8_t count;                    // 当前有效数据量
-  uint8_t head;                     // 当前有效数据量
-} OpQueue;
+size_t hb_queue_get(const HistoryBytesQueue *q, uint8_t n);
 
 // 添加新数据 获取历史 ___push metadata
-void op_queue_push(OpQueue *q, op_type_t data)
-{
-  q->buffer[q->front] = data;
-  q->front = (q->front + 1) % OP_WINDOW_SIZE;
-  if (q->count < OP_WINDOW_SIZE)
-    q->count++;
-  /** 如果说实际数量小于 总大小 */
-  if (q->count == HISTORY_SIZE)
-    q->head = q->front;
-  else /** 此时就是从0开始遍历 */
-    q->head = 0;
-}
-
-// void update_memory_snapshot()
-// {
-//   static uint32_t last_sec = 0;
-//   uint32_t current_sec = get_timestamp();
-
-//   if (current_sec != last_sec)
-//   {
-//     queue_push(&mem_history, current_mem_usage);
-//     last_sec = current_sec;
-//   }
-// }
+void op_queue_push(OpQueue *q, op_type_t data);
 
 /****************************************************************************
  * Public Function Definitions
@@ -181,7 +146,7 @@ void init_leak_detection(void);
 
 int add_metadata_to_task_mem_stats(struct memchecker_metadata *metadata);
 
-int update_task_mem_stats_when_free(struct task_stats_list_lock *ttls, struct memchecker_metadata *metadata);
+int update_task_mem_stats_when_free(struct memchecker_metadata *metadata);
 
 void get_task_list_lock_hf(struct task_stats_list_lock **p);
 
@@ -195,4 +160,7 @@ void init_low_fre_leak_detection(void);
 
 int get_task_mm_info(struct task_mem_stats *tms, struct rt_mem_info *rt_info);
 
+int get_info_by_pid(pid_t pid, struct rt_mem_info *rt_info);
+
+int update_task_mem_stats_when_free(struct memchecker_metadata *metadata);
 #endif

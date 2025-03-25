@@ -31,32 +31,29 @@
 #include <nuttx/lib/math.h>
 #include "leakdetector.h"
 
-enum WEIGHT
-{
-  WEIGHT_ACTIVE_ALLOCS,
-  WEIGHT_CHUNCK_AND_SIZE,
-  WEIGHT_AGE,
-  WEIGHT_NUM
-};
+#define MAX_MEMORY 1024
+#define MAX_AGE_THRESHOLD (3000)
+#define CHECKING_TIMES (30)
+#define MAX_MM_UNFREED_COUNT (10)
+#define MAX_MM_ACTIVE_SIZE (1024)
 
-enum LEAK_ERR
+typedef enum
 {
-  UNFREEED_NUM,
-  UNFREEED_CHUNK,
-  HIGH_GROWTH_RATE,
-  LEAK,
-  LEAK_ERR_NUM
-};
+  TOO_MANY_UNFREED_ALLOC,
+  OVER_MAX_ACTIVE_SIZE,
+  LEAK_DEFAULT_ERR,
+} LEAK_ERR;
+
+struct rt_mem_info;
+struct task_mem_stats;
+
+int basic_meomory_leak_check(struct rt_mem_info *rt_info, struct task_mem_stats *tms);
+
+void report_err(LEAK_ERR err, pid_t pid);
 
 struct task_mem_stats;
 
-float cal_w1(struct task_mem_stats *tms);
-
-/** (活跃时间 * 活跃大小 + .... +  )  /  64 * 5s * 未释放次数   */
-float cal_w2(struct task_mem_stats *tms);
-
-int cal_weight_value(struct task_mem_stats *tms);
-/** 逻辑判断 内存活跃数量为0 但是却存在内存量 此时必然发生泄漏  */
+float calc_leak_rate(const struct rt_mem_info *rt_info, const struct task_mem_stats *tms);
 
 int is_basic_err(struct task_mem_stats *tms);
 
