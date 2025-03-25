@@ -21,6 +21,8 @@
 #include <nuttx/syslog/syslog.h>
 #include "mmdebug.h"
 
+#include "net.h"
+
 /****************************************************************************
  * Pre-processor Definitions
  ****************************************************************************/
@@ -37,6 +39,8 @@
 #define MEMCHECKER_POOL_SIZE (MEMCHECKER_PAGE_NUMBER * MEMCHECKER_PAGE_SIZE)
 
 #define MEMCHECKER_TIMEOUT 10 * 100
+
+#define DECAY_FACTOR 0.95
 
 /****************************************************************************
  * Global Data
@@ -85,9 +89,6 @@ static const char *error_msg[] = {"no error",
                                   "Memory leak"};
 
 static struct work_s manager_work;
-
-
-float decay_factor = 0.95;
 
 /****************************************************************************
  * Private Functions
@@ -501,7 +502,7 @@ static void *memchecker_guarded_alloc(const char *file, int line, size_t size)
 
   flags = spin_lock_irqsave(&allocated_list.lock);
   list_add_tail(&allocated_list.head, &metadata->node);
-  spin_unlock_irqstore(&allocated_list.lock, flags);
+  spin_unlock_irqrestore(&allocated_list.lock, flags);
 
   unsigned long addr = (unsigned long)malloc(size + 2 * MEMCHECKER_BOUND_SIZE);
   if(!addr)
@@ -617,7 +618,7 @@ static void update_activity(struct memchecker_metadata *metadata)
     }
   else
     {
-      metadata->activity_score *= decay_factor;
+      metadata->activity_score *= DECAY_FACTOR;
     }
 
   metadata->last_hash = current_hash;
@@ -658,9 +659,16 @@ static void metadata_update_activity(void)
 
 static void metadata_timeout(void)
 {
+  if(list_is_empty(&freed_list.head))
+  {
+    syslog(LOG_INFO, "metadata_timeout: freed list is empty");
+    return;
+  }
+
   time_t now_ts = clock_systime_ticks();
   struct memchecker_metadata *metadata;
   struct list_node *node;
+
   irqstate_t freed_list_flags;
   irqstate_t usable_list_flags;
 
@@ -683,9 +691,10 @@ static void metadata_timeout(void)
       free(metadata);
 #endif
     }
-     
   }
   spin_unlock_irqrestore(&freed_list.lock, freed_list_flags);
+
+  memchecker_net_initialize();
 }
 
 static void metadata_error_operation(void)
@@ -721,14 +730,14 @@ static void metadata_manager(FAR void *arg)
   metadata_update_activity();
 
   work_queue(HPWORK, &manager_work,
-             (worker_t)metadata_manager, NULL, SEC2TICK(1));
+             (worker_t)metadata_manager, NULL, SEC2TICK(5));
   return;
 }
 
 static void init_metadata_manager(void)
 {
   work_queue(HPWORK, &manager_work,
-             (worker_t)metadata_manager, NULL, SEC2TICK(1));
+             (worker_t)metadata_manager, NULL, SEC2TICK(5));
 }
 
 /****************************************************************************
@@ -787,11 +796,13 @@ void *memchecker_malloc(const char *file, int line, size_t size)
 void memchecker_free(const char *file, int line, const void *addr)
 {
   //这个函数还没有在开启ld时的实现
+#ifndef CONFIG_MM_MEMCHECKER_LEAKDETECTOR
   if (!is_memchecker_addr((unsigned long)addr))
   {
     free((void *)addr);
     return;
   }
+#endif
 
   return memchecker_guarded_free(file, line, (void *)addr);
 }
