@@ -9,13 +9,9 @@
 #include <nuttx/sched.h>
 #include "calcm.h"
 
-#define HISTORY_SIZE 60
-#define OP_WINDOW_SIZE 60
-#define MAX_MEMORY 512
-#define MAX_AGE_THRESHOLD (3000)
-#define CHECKING_TIMES (20)
-#define MAX_MM_UNFREED_COUNT (10)
-#define MAX_MM_ACTIVE_SIZE (1024)
+#define HISTORY_SIZE (30)
+#define OP_WINDOW_SIZE (30)
+#define CHECKING_TIMES (30)
 
 /****************************************************************************
  *  struct task_stats_list_lock
@@ -35,7 +31,8 @@ struct task_stats_list_lock
 typedef enum
 {
   ALLOC_LOG,
-  FREE_LOG
+  FREE_LOG,
+  NONE_LOG
 } op_type_t;
 
 // 针对于 每一节点下的搜索
@@ -50,7 +47,7 @@ typedef struct
 
 typedef struct
 {
-  op_type_t buffer[OP_WINDOW_SIZE]; // 最近20次的内存大小
+  op_type_t buffer[OP_WINDOW_SIZE]; // 最近30次的内存大小
   uint8_t front;                    // 当前写入位置
   uint8_t count;                    // 当前有效数据量
   uint8_t head;                     // 当前有效数据量
@@ -96,14 +93,12 @@ struct task_mem_stats
 struct rt_mem_info
 {
   size_t total_active_mm_size; /** 活跃内存使用的总大小 */
-  size_t max_mm_size;          /** 最大内存块大小 */
+
+  size_t max_mm_size; /** 最大内存块大小 */
 
   int unfreed_count; /** y未释放申请的次数 */
 
-  clock_t active_mm_total_time; /** 活跃内存的总存活时间 */
-  clock_t max_mm_time;          /** 内存块中存活的最长时间 */
-  int avg_active;               /** todo */
-  int max_active;               /** todo */
+  clock_t max_mm_time; /** 内存块中存活的最长时间 */
 };
 
 /****************************************************************************

@@ -7,7 +7,6 @@ ifeq ($(CONFIG_MM_MEMCHECKER),y)
   CFLAGS += -include $(TOPDIR)/include/nuttx/mm/memchecker.h
   CFLAGS += -DWARN_ENABLE
   CFLAGS += -DINFO_ENABLE
-  CFLAGS += -DDEBUG_ENABLE
 endif
 
 ifeq ($(CONFIG_MM_MEMCHECKER_LEAKDETECTOR),y)

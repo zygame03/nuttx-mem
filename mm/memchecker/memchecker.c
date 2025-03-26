@@ -544,8 +544,6 @@ static void *memchecker_guarded_alloc(const char *file, int line, size_t size)
 
 #ifdef CONFIG_MM_MEMCHECKER_LEAKDETECTOR
   int i;
-  /*** 一开始默认都是添加到高频扫描链表中 */
-  /*** 如果不为空, 则默认   */
   i = add_metadata_to_task_mem_stats(metadata);
   if (i)
   {
@@ -647,9 +645,9 @@ static void update_activity(struct memchecker_metadata *metadata)
         (metadata->activity_score > 100) ? 100 : metadata->activity_score;
   }
   else
-    {
-      metadata->activity_score *= DECAY_FACTOR;
-    }
+  {
+    metadata->activity_score *= DECAY_FACTOR;
+  }
 
   metadata->last_hash = current_hash;
   // syslog(LOG_INFO, "activity_score: %d", metadata->activity_score);
@@ -689,7 +687,7 @@ static void metadata_update_activity(void)
 
 static void metadata_timeout(void)
 {
-  if(list_is_empty(&freed_list.head))
+  if (list_is_empty(&freed_list.head))
   {
     syslog(LOG_INFO, "metadata_timeout: freed list is empty");
     return;

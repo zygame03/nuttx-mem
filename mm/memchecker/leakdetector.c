@@ -29,6 +29,18 @@
  *  hb_queue_push  记录历史多少次的活跃字节数
  *                 以此中记录的数据分析内存增长行为
  ****************************************************************************/
+op_type_t op_queue_get(OpQueue *q, uint8_t n)
+{
+  if (!q)
+  {
+    syslog(LOG_WARNING, "%s opqueue is NULL, which is not allowed...%s\n",
+           COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
+    return -1;
+  }
+  /*** 获取从head开始的第几位数据 */
+  return q->buffer[(q->head + n) % OP_WINDOW_SIZE];
+}
+
 void op_queue_push(OpQueue *q, op_type_t data)
 {
   if (!q)
@@ -290,15 +302,44 @@ static void check_memory_leak(struct task_stats_list_lock *tsll)
     DEBUG();
     /** --- 记录当下活字节 --- */
     hb_queue_push(&tms->history_bytes, rt_info.total_active_mm_size);
+
+#ifndef DISABLE_INFO
+    count = tms->history_bytes.count;
+    INFO("history_bytes_head:%u\n", tms->history_bytes.head);
+    /** 调试输出  */
+    for (i = 0; i < count; i++)
+    {
+      INFO("history[%u] = %d",
+           i, hb_queue_get(&tms->history_bytes, i));
+    }
+    count = tms->opq.count;
+    INFO("head: %d\n", tms->opq.head);
+    for (i = 0; i < count; i++)
+    {
+      switch (op_queue_get(&tms->opq, i))
+      {
+      case 0:
+        INFO("ALLOC");
+        break;
+      case 1:
+        INFO("FREE");
+        break;
+      case -1:
+        INFO("NONE");
+        break;
+      }
+    }
+#endif
+
     i = basic_meomory_leak_check(&rt_info, tms);
     DEBUG();
     if (i)
     {
       // todo 这里初始化需要初始化为0
       tms->warning_count++;
+      INFO("Basic Memmory Leak Problems...\n");
       continue;
     }
-
     DEBUG();
     if (tms->count > CHECKING_TIMES)
     {
@@ -522,25 +563,28 @@ int add_metadata_to_task_mem_stats(struct memchecker_metadata *metadata)
            COLOR_TABLE[COLOR_RED], tms->pid, COLOR_TABLE[COLOR_RESET]);
     return -1;
   }
-  /** 只有把结构体加进去了以后才能够 去看是否需要整体启动 */
+
   flags = spin_lock_irqsave(&hf.tms_list_lock);
   DEBUG("in...\n");
   list_for_every_entry(&hf.task_mem_status_list, tms, struct task_mem_stats, node_task_mem)
   {
+    /** 此分值表示对应进程 内存状态已经被跟踪 */
     if (tms->pid == pid)
     {
-      /** 增添一些记录 */
+      /** 操作记录*/
       op_queue_push(&tms->opq, ALLOC_LOG);
+      INFO("add ALLOC_LOG");
       tms->total_mm_size += metadata->size;
       DEBUG("out...\n");
-      spin_unlock_irqrestore(&hf.tms_list_lock, flags);
-      /** 正常情况下 此处的工作队列的状态是运行中...  */
+      /** 确保工作队列正在运行当中...  */
       if (!atomic_read_acquire(&hf.workequeue_status))
       {
         syslog(LOG_INFO, "%s Something wrong, seirous problems...%s\n",
                COLOR_TABLE[COLOR_BLUE], COLOR_TABLE[COLOR_RESET]);
         return -1;
       }
+      DEBUG();
+      spin_unlock_irqrestore(&hf.tms_list_lock, flags);
       return 0;
     }
   }
@@ -553,20 +597,23 @@ int add_metadata_to_task_mem_stats(struct memchecker_metadata *metadata)
     return -1;
   }
 
-  /**---  初始化历史记录窗口  ---*/
-  memset(tms->history_bytes.buffer, 0, HISTORY_SIZE);
+  /**---  初始化申请释放记录历史窗口  ---*/
+  memset(tms->history_bytes.buffer, -1, HISTORY_SIZE);
   tms->history_bytes.count = 0;
   tms->history_bytes.head = 0;
   tms->history_bytes.front = 0;
 
-  /** 初始操作窗口记录 */
-  memset(tms->opq.buffer, 0, OP_WINDOW_SIZE);
+  /** 活跃字节历史记录 */
+  memset(tms->opq.buffer, NONE_LOG, OP_WINDOW_SIZE);
   tms->history_bytes.count = 0;
   tms->history_bytes.head = 0;
   tms->history_bytes.front = 0;
 
+  /** 初始化进程申请的总大小 和 报警次数 */
   tms->total_mm_size = 0;
+  tms->warning_count = 0;
 
+  INFO("add ALLOC_LOG");
   op_queue_push(&tms->opq, ALLOC_LOG);
   tms->total_mm_size += metadata->size;
   /** 初始检查 */
@@ -640,6 +687,7 @@ int update_task_mem_stats_when_free(struct memchecker_metadata *metadata)
       // hb_queue_push(&tms->history_bytes, metadata->size);
       /** 操作数*/
       op_queue_push(&tms->opq, FREE_LOG);
+      INFO("add FREE_LOG");
       spin_unlock_irqrestore(&hf.tms_list_lock, flags);
       DEBUG("out...\n");
       return 0;
@@ -822,11 +870,9 @@ int get_info_by_pid(pid_t pid, struct rt_mem_info *rt_info)
            COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
     return -1;
   }
-  // todo
+  // todo  待限制
   struct memchecker_metadata *metadata_list[20] = {0};
-  DEBUG();
   count = pid_to_metadata(pid, metadata_list);
-  DEBUG();
   if (0 > count)
   {
     syslog(LOG_INFO, "%sserious problems...count < 0...%s\n",
@@ -841,6 +887,7 @@ int get_info_by_pid(pid_t pid, struct rt_mem_info *rt_info)
       clock_t time;
       unfreed_count += 1;
       total_active_mm_size += metadata_list[i]->size;
+      INFO("each_size: %u ...\n", metadata_list[i]->size);
       max_mm_size = (metadata_list[i]->size > max_mm_size) ? metadata_list[i]->size : max_mm_size;
       time = clock_systime_ticks() - metadata_list[i]->alloc_track.ts;
       active_mm_total_time += time;
@@ -851,7 +898,6 @@ int get_info_by_pid(pid_t pid, struct rt_mem_info *rt_info)
   rt_info->total_active_mm_size = total_active_mm_size;
   rt_info->max_mm_size = max_mm_size;
   rt_info->unfreed_count = unfreed_count;
-  rt_info->active_mm_total_time = active_mm_total_time;
   rt_info->max_mm_time = max_mm_time;
   return 0;
 }
