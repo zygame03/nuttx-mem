@@ -25,8 +25,8 @@ void memchecker_net_initialize(void)
   
   memset(&sockaddr, 0x00, sizeof(sockaddr));
   sockaddr.sin_family = AF_INET;
-  sockaddr.sin_port = htons(9999);
-  sockaddr.sin_addr.s_addr = inet_addr("192.168.101.14");
+  sockaddr.sin_port = htons(10086);
+  sockaddr.sin_addr.s_addr = inet_addr("192.168.101.15");
 
   if (connect(sockfd, (struct sockaddr *)&sockaddr, sizeof(sockaddr)) < 0)
     {
