@@ -881,7 +881,10 @@ int pid_to_metadata(pid_t pid, struct memchecker_metadata **metadata_list)
 
 void memchecker_init(void)
 {
-  // syslog_file_channel("/log/memchecker");
+  char *ident = "NUTTX_LOG";
+  int logopt = LOG_PID | LOG_CONS;
+  int facility = LOG_USER;
+  openlog(ident, logopt, facility);
 
   list_initialize(&allocated_list.head);
   list_initialize(&freed_list.head);

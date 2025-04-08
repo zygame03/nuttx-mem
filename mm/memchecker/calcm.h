@@ -32,10 +32,8 @@
 #include "leakdetector.h"
 
 #define MAX_AGE_THRESHOLD (3000)
-#define MAX_MM_UNFREED_COUNT (10)
+#define MAX_MM_UNFREED_COUNT (32)
 #define MAX_MM_ACTIVE_SIZE (1024)
-#define ALARM_THRESHOLD 0.7f
-#define WARNING_THRESHOLD 0.5f
 
 typedef enum
 {
@@ -45,6 +43,16 @@ typedef enum
   LEAK_DEFAULT_ERR,
 } LEAK_ERR;
 
+/**  */
+typedef struct
+{
+  float R;
+  float T;
+  float C;
+  float A;
+  float FinalValue;
+} relevant_score_t;
+
 struct rt_mem_info;
 struct task_mem_stats;
 
@@ -52,7 +60,7 @@ int basic_meomory_leak_check(struct rt_mem_info *rt_info, struct task_mem_stats 
 
 void report_err(LEAK_ERR err, pid_t pid);
 
-struct task_mem_stats;
+float calculate_leak_score(struct rt_mem_info *rt_info, struct task_mem_stats *tms);
 
 float calc_leak_rate(const struct rt_mem_info *rt_info, const struct task_mem_stats *tms);
 

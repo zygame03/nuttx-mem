@@ -13,11 +13,12 @@
 #define OP_WINDOW_SIZE (30)
 #define CHECKING_TIMES (30)
 
+#define PROCESS_NUM (20)
+
 /****************************************************************************
  *  struct task_stats_list_lock
  *    该结构体封装了三个成员:
- *    @task_mem_status_list  对应task_mem_stats链表,
- *                           通过遍历链表中成员的信息检查异常
+ *    @task_mem_status_list  对应task_mem_stats链表
  *    @tms_list_lock         访问链表时所申请的锁, 保持数据一致性
  *    @workqueue_status      对应该工作队列的状态 (0--->未启用) (1--->启用)
  ****************************************************************************/
@@ -25,6 +26,8 @@ struct task_stats_list_lock
 {
   struct list_node task_mem_status_list;
   spinlock_t tms_list_lock;
+  int pid_arr[PROCESS_NUM]; /** 存储进程号 */
+  int num;                  /** 对应工作队列所跟踪的进程数 */
   atomic_t workequeue_status;
 };
 
@@ -65,7 +68,7 @@ struct task_mem_stats
 
   pid_t pid; /** 任务ID  */
 
-  uint16_t score; /**  进程实时得分分值,通过权值计算得到  ---限制其大小 */
+  float score; /**  进程实时得分分值,通过权值计算得到  ---限制其大小 */
 
   /** 每一次check的时候去存储 */
   HistoryBytesQueue history_bytes; /** 最近20次字节变化记录  */
@@ -134,6 +137,9 @@ size_t hb_queue_get(const HistoryBytesQueue *q, uint8_t n);
 // 添加新数据 获取历史 ___push metadata
 void op_queue_push(OpQueue *q, op_type_t data);
 
+// 获取历史操作记录
+op_type_t op_queue_get(OpQueue *q, uint8_t n);
+
 /****************************************************************************
  * Public Function Definitions
  ****************************************************************************/
@@ -157,5 +163,6 @@ int get_task_mm_info(struct task_mem_stats *tms, struct rt_mem_info *rt_info);
 
 int get_info_by_pid(pid_t pid, struct rt_mem_info *rt_info);
 
-int update_task_mem_stats_when_free(struct memchecker_metadata *metadata);
+void print_task_info_by_id(pid_t pid);
+
 #endif

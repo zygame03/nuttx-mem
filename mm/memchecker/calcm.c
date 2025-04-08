@@ -18,30 +18,31 @@
 #define MAX_AGE_THRESHOLD (6000)
 
 /** 最大活跃内存块数 */
-#define MAX_MM_UNFREED_COUNT (15)
+#define MAX_MM_UNFREED_COUNT (20)
 
-/** 内存块总大小 */
-#define MAX_MM_ACTIVE_SIZE (2048)
+/** 活跃内存大小 */
+#define MAX_MM_ACTIVE_SIZE (1024)
 
 volatile int dynamic_param = 12;
+
 void report_err(LEAK_ERR err, pid_t pid)
 {
   switch (err)
   {
   case TOO_MANY_UNFREED_ALLOC:
-    syslog(LOG_INFO, "%s [task:%u]-Too Many unfreed allocs...%s\n",
+    syslog(LOG_INFO, "%s[task:%u] too Many unfreed allocs...%s\n",
            COLOR_TABLE[COLOR_RED], pid, COLOR_TABLE[COLOR_RESET]);
     break;
   case OVER_MAX_ACTIVE_SIZE:
-    syslog(LOG_INFO, "%s [task:%u]-Active memory size is too much...%s\n",
+    syslog(LOG_INFO, "%s[task:%u] active memory size is too much...%s\n",
            COLOR_TABLE[COLOR_RED], pid, COLOR_TABLE[COLOR_RESET]);
     break;
   case EXCESSIVE_SURVIVAL_TIME:
-    syslog(LOG_INFO, "%s [task:%u] might have memory not freed...%s\n",
+    syslog(LOG_INFO, "%s[task:%u] memory survives too long...%s\n",
            COLOR_TABLE[COLOR_RED], pid, COLOR_TABLE[COLOR_RESET]);
     break;
   default:
-    syslog(LOG_INFO, "%s [task:%u] might have some memory leak problems...%s\n",
+    syslog(LOG_INFO, "%s[task:%u] may have some memory leak problems...%s\n",
            COLOR_TABLE[COLOR_RED], pid, COLOR_TABLE[COLOR_RESET]);
     break;
   }
@@ -56,13 +57,13 @@ int basic_meomory_leak_check(struct rt_mem_info *rt_info, struct task_mem_stats 
 {
   if (!rt_info)
   {
-    syslog(LOG_INFO, "%s rt_info is NULL...\n%s",
+    syslog(LOG_INFO, "%srt_info is NULL...\n%s",
            COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
     return -1;
   }
   if (!tms)
   {
-    syslog(LOG_INFO, "%s tms is NULL...\n%s",
+    syslog(LOG_INFO, "%stms is NULL...\n%s",
            COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
     return -1;
   }
@@ -83,9 +84,9 @@ int basic_meomory_leak_check(struct rt_mem_info *rt_info, struct task_mem_stats 
     isErr = true;
   }
   /**--- 内存块活跃时间过长 --- */
-  if (rt_info->max_mm_time > EXCESSIVE_SURVIVAL_TIME)
+  if (rt_info->max_mm_time > MAX_AGE_THRESHOLD)
   {
-    report_err(OVER_MAX_ACTIVE_SIZE, pid);
+    report_err(EXCESSIVE_SURVIVAL_TIME, pid);
     isErr = true;
   }
   if (isErr)
@@ -97,19 +98,35 @@ int basic_meomory_leak_check(struct rt_mem_info *rt_info, struct task_mem_stats 
 //  动态调整部分权重值
 static void update_weights(struct rt_mem_info *rt_info, weight_factors_t *w, struct task_mem_stats *tms)
 {
-  const float mem_usage = (float)rt_info->total_active_mm_size / MAX_MM_ACTIVE_SIZE;
+  const float mem_usage = ((float)rt_info->total_active_mm_size / (float)MAX_MM_ACTIVE_SIZE);
 
   /** 调节趋势权重 内存压力越大，趋势权重越高 */
   w->w_trend = 0.3 + 0.5 * mem_usage;
 
+  INFO("total_active_mm_size:%d", rt_info->total_active_mm_size);
+  INFO("MAX_MM_ACTIVE_SIZE:%d", MAX_MM_ACTIVE_SIZE);
+  INFO("mem_usage:%.2f", mem_usage);
+
   /** 调节聚集度权重 未释放频率越高，聚集度权重越高 */
-  float alloc_freq = (float)rt_info->unfreed_count / (tms->total_alloc_count);
+  /** 注意避免此时除0错误 */
+  float alloc_freq = 0.0f;
+  if (tms->total_alloc_count)
+  {
+    float alloc_freq = (float)rt_info->unfreed_count / (tms->total_alloc_count);
+  }
+
+  /** 若未释放频率为0 则不考虑增长部分的权重 */
   w->w_clustering = 0.2 + 0.3 * alloc_freq;
+  INFO("unfreed_count:%d", rt_info->unfreed_count);
+  INFO("total_alloc_count:%d", tms->total_alloc_count);
+  INFO("w_clustering:%.2f", w->w_clustering);
 
   // 固定权重部分
   w->w_leak_rate = 0.4;
   /** 内存年龄 */
   w->w_age = 0.1;
+  INFO("w_trend:%.2f  w_clustering: %.2f w_leak_rate:%.2f w_age:%.2f",
+       w->w_trend, w->w_clustering, w->w_leak_rate, w->w_age);
 }
 
 /****************************************************************************
@@ -127,14 +144,14 @@ float calc_leak_rate(const struct rt_mem_info *rt_info, const struct task_mem_st
 {
   if (!rt_info)
   {
-    syslog(LOG_WARNING, "%s rt_info can't be NULL...\n%s",
+    syslog(LOG_WARNING, "%srt_info can't be NULL...\n%s",
            COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
     return 0.0f;
   }
 
   if (!tms)
   {
-    syslog(LOG_WARNING, "%s tms can't be NULL...\n%s",
+    syslog(LOG_WARNING, "%stms can't be NULL...\n%s",
            COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
     return 0.0f;
   }
@@ -142,12 +159,13 @@ float calc_leak_rate(const struct rt_mem_info *rt_info, const struct task_mem_st
   if (!tms->total_alloc_count)
     return 0.0f;
   /*** 未释放率 */
+  INFO("--------calc_leak_rate---------");
   INFO("unfreed_count:%d\n", rt_info->unfreed_count);
   INFO("total_alloc_count:%d\n", tms->total_alloc_count);
-  INFO("leak_rate: %.2f", (float)rt_info->unfreed_count / tms->total_alloc_count);
+  INFO("Leak_Rate_Score: %.4f", (float)rt_info->unfreed_count / tms->total_alloc_count);
+  INFO("-------------------------------");
   return (float)(rt_info->unfreed_count) / tms->total_alloc_count;
 }
-
 /****************************************************************************
  * Name: calc_trend_coeff
  *  Description:
@@ -168,60 +186,79 @@ static float calc_trend_coeff(struct rt_mem_info *rt_info, struct task_mem_stats
 
   if (!rt_info)
   {
-    syslog(LOG_WARNING, "%s rt_info can't be NULL...%s\n",
+    syslog(LOG_WARNING, "%srt_info can't be NULL...%s\n",
            COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
     return 0.0f;
   }
   if (!tms)
   {
-    syslog(LOG_WARNING, "%s tms can't be NULL...%s\n",
+    syslog(LOG_WARNING, "%stms can't be NULL...%s\n",
            COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
     return 0.0f;
   }
-
   if ((tms->count < CHECKING_TIMES) || (tms->history_bytes.count < CHECKING_TIMES))
   {
-    syslog(LOG_WARNING, "%s count < %u, can't calculate trend coeff...\n%s",
+    syslog(LOG_WARNING, "%scount < %u, can't calculate trend coeff...\n%s",
            COLOR_TABLE[COLOR_RED], CHECKING_TIMES, COLOR_TABLE[COLOR_RESET]);
     return 0.0f;
   }
 
+  INFO("--------history_bytes--------");
   for (int i = 0; i < n; ++i)
   {
     sum_x += i;
     sum_y += hb_queue_get(&tms->history_bytes, i);
-    INFO("history_bytes[%d]: %d\n",
+    INFO("history_bytes[%d]: %d",
          i, hb_queue_get(&tms->history_bytes, i));
     sum_xy += i * hb_queue_get(&tms->history_bytes, i);
     sum_xx += i * i;
   }
+  INFO("-----------------------------");
 
-  /** 最小二乘法 */
+  /** 通过最小二乘法进行计算 */
   numerator = n * sum_xy - sum_x * sum_y;
   denominator = n * sum_xx - sum_x * sum_x;
-  /* 如果说分母为0 */
-  /** 一般来讲 不会分母不会为0*/
+
+  /** 基本不存在分母为0的概率 */
   slope = (numerator) / (denominator);
-  // mon->trend_coeff = slope;
+  INFO("slope_score: %.4f", slope);
   return slope;
 }
 
-// 3. 分配聚集度（基于香农熵） 暂时无法计算
+// 3. 分配聚集度（基于香农熵）
 static float calc_clustering(struct task_mem_stats *tms)
 {
-  uint32_t count[3] = {0}; // 统计四个时间段的分配次数
+  int i;
+  uint32_t count[4] = {0}; // 统计四个时间段的分配次数
   const uint32_t window_len = tms->opq.count;
+  float ret = 0.0f;
 
-  for (uint32_t i = 0; i < window_len; ++i)
+  INFO("--------operation_log------");
+  for (i = 0; i < window_len; ++i)
   {
-    if (tms->opq.buffer[tms->opq.head + 1] == ALLOC_LOG)
+    // if (op_queue_get(&tms->opq, i) == ALLOC_LOG)
+    // {
+    //   INFO("operation[%d]:ALLOC_LOG", i);
+    //   count[i % 4]++; // 将窗口分为4个时段
+    // }
+    switch (op_queue_get(&tms->opq, i))
     {
-      count[i % 3]++; // 将窗口分为4个时段
+    case 0:
+      INFO("ALLOC_LOG");
+      count[i % 4]++;
+      break;
+    case 1:
+      INFO("FREE_LOG");
+      break;
+    default:
+      INFO("NONE");
+      break;
     }
   }
+  INFO("---------------------------\n");
   // 计算熵值
   float entropy = 0.0f;
-  for (int j = 0; j < 3; ++j)
+  for (int j = 0; j < 4; ++j)
   {
     if (count[j] > 0)
     {
@@ -229,39 +266,100 @@ static float calc_clustering(struct task_mem_stats *tms)
       entropy -= p * logf(p);
     }
   }
-  // 熵越低说明分配越集中
-  return 1.0f - (entropy / logf(3));
+  // 熵越低说明分配越集中 0.0014
+  ret = 1.0f - (entropy / logf(4));
+  INFO("clustering_score:%.4f", ret);
+  return ret;
 }
 
-// 4. 内存年龄评分  /*** 超过一分钟 > 30s  */
+/****************************************************************************
+ * Name: calc_age_score
+ *  Description:
+ *    根据内存驻留时间与最大驻留时间比例进行计算
+ *    驻留时间越长, 越不安全
+ * Input Parameters:
+ *  struct rt_mem_info *rt_info
+ *  struct task_mem_stats *tms
+ * Returned Value:
+ *        正常情况下返回对应浮点数结果
+ *        否则对应返回0.0f
+ ****************************************************************************/
 static float calc_age_score(struct rt_mem_info *rt_info, struct task_mem_stats *tms)
 {
-  uint32_t current_tick = clock_systime_ticks();
-  float max_age = 0.0f;
+  clock_t max_age;
   max_age = rt_info->max_mm_time;
+  float ret = 0.0f;
 
-  return max_age / MAX_AGE_THRESHOLD;
+  ret = ((float)max_age / MAX_AGE_THRESHOLD);
+
+  INFO("+-------------------+-----------+");
+  INFO("| %-16s | %9d |", "max_age:", max_age);
+  INFO("| %-16s | %9d |", "MAX_AGE_THRESHOLD:", MAX_AGE_THRESHOLD);
+  INFO("| %-16s | %9.4f |", "age_score:", ret);
+  INFO("+-------------------+-----------+");
+  return ret;
 }
 
-/**  */
+/** 可能还需要针对进程  */
+static void print_leak_score(weight_factors_t *w, relevant_score_t *rs, struct task_mem_stats *tms)
+{
+  if (!w || !rs)
+  {
+    syslog(LOG_WARNING, "%s @w or @rs is NULL, which is not allowed...\n%s",
+           COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
+    return;
+  }
+  if (!tms)
+  {
+    syslog(LOG_WARNING, "%s tms can't be NULL..\n%s",
+           COLOR_TABLE[COLOR_RED], COLOR_TABLE[COLOR_RESET]);
+    return;
+  }
+  syslog(LOG_INFO,
+         "%s"
+         "┌──────────────────────────────┐\n"
+         "│ pid:%-9d  count:%-4d    │\n"
+         "├──────────────────────────────┤\n"
+         "│ %-12s  %6s  %6s │\n"
+         "├──────────────────────────────┤\n"
+         "│ Leak Rate    %6.2f × %-6.2f │\n"
+         "│ Trend Coeff  %6.2f × %-6.2f │\n"
+         "│ Clustering   %6.2f × %-6.2f │\n"
+         "│ Age          %6.2f × %-6.2f │\n"
+         "├──────────────────────────────┤\n"
+         "│ Final Score    %11.2f   │\n"
+         "└──────────────────────────────┘%s",
+         COLOR_TABLE[COLOR_MAGENTA],
+         tms->pid, tms->count,
+         "Metric", "Value", "Weight", // 表头
+         rs->R, w->w_leak_rate,
+         rs->T, w->w_trend,
+         rs->C, w->w_clustering,
+         rs->A, w->w_age,
+         rs->FinalValue,
+         COLOR_TABLE[COLOR_RESET]);
+}
+
 float calculate_leak_score(struct rt_mem_info *rt_info, struct task_mem_stats *tms)
 {
-  // 更新权重
-  weight_factors_t w;
+  // 动态调整更新权重
+  weight_factors_t w = {0};
+  relevant_score_t rs = {0};
   update_weights(rt_info, &w, tms);
 
   // 计算各指标
-  const float R = calc_leak_rate(rt_info, tms);
-  const float T = calc_trend_coeff(rt_info, tms);
-  const float C = calc_clustering(tms);
-  const float A = calc_age_score(rt_info, tms);
-  float final_vaule = 0.0f;
-  syslog(LOG_INFO, "%sR:%.2f T:%.2f C:%.2f A:%.2f \n%s",
-         COLOR_TABLE[COLOR_GREEN], R, T, C, A, COLOR_TABLE[COLOR_RESET]);
-  // 综合评分
-  final_vaule = (R * w.w_leak_rate) +
-                (T * w.w_trend) +
-                (C * w.w_clustering) +
-                (A * w.w_age);
-  return final_vaule;
+  rs.R = calc_leak_rate(rt_info, tms);
+  rs.T = calc_trend_coeff(rt_info, tms);
+  rs.C = calc_clustering(tms);
+  rs.A = calc_age_score(rt_info, tms);
+  float final_value = 0.0f;
+
+  // 权值相乘计算
+  final_value = (rs.R * w.w_leak_rate) +
+                (rs.T * w.w_trend) +
+                (rs.C * w.w_clustering) +
+                (rs.A * w.w_age);
+  rs.FinalValue = final_value;
+  print_leak_score(&w, &rs, tms);
+  return final_value;
 }
