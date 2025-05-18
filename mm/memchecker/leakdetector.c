@@ -5,6 +5,7 @@
 #include <nuttx/mm/memchecker.h>
 #include <nuttx/spinlock.h>
 #include <syslog.h>
+#include <math.h>
 #include <nuttx/mutex.h>
 #include <nuttx/clock.h>
 #include <nuttx/sched.h>

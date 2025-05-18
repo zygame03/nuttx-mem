@@ -541,7 +541,6 @@ static void *memchecker_guarded_alloc(const char *file, int line, size_t size)
   metadata->state = MEMCHECKER_ALLOCATED;
 
   for_each_canary(metadata, set_canary_byte);
-  for_each_canary(metadata, set_canary_byte);
 
 #ifndef CONFIG_MM_MEMCHECKER_LEAKDETECTOR
   spin_unlock_irqrestore(&metadata->lock, flags);
